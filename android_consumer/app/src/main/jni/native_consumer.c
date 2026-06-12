@@ -391,6 +391,19 @@ Java_com_virtual_1drm_consumer_MainActivity_nativeSendTouchFrame(
 }
 
 JNIEXPORT void JNICALL
+Java_com_virtual_1drm_consumer_MainActivity_nativeSendKey(
+    JNIEnv *env, jobject thiz, jint action, jint keycode)
+{
+    if (!g_state.ctx)
+        return;
+    struct InputEvent ev = {
+        .type = INPUT_TYPE_KEY,
+        .key = { .action = action, .keycode = keycode },
+    };
+    push_input_event(g_state.ctx, &ev);
+}
+
+JNIEXPORT void JNICALL
 Java_com_virtual_1drm_consumer_MainActivity_nativeSendMouseMotion(
     JNIEnv *env, jobject thiz, jfloat x, jfloat y)
 {

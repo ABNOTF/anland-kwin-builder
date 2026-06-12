@@ -5,6 +5,7 @@ import android.content.pm.ActivityInfo;
 import android.os.Bundle;
 import android.util.Log;
 import android.view.InputDevice;
+import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.view.PointerIcon;
 import android.view.Surface;
@@ -29,6 +30,7 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback {
     private native void nativeStop();
     private native void nativeSendTouch(int action, float x, float y, int pointerId);
     private native void nativeSendTouchFrame();
+    private native void nativeSendKey(int action, int keycode);
     private native void nativeSendMouseMotion(float x, float y);
     private native void nativeSendMouseButton(int button, boolean pressed);
     private native void nativeSendMouseScroll(int axis, float value);
@@ -37,9 +39,10 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
-        setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE);
+        setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
 
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN);
 
         surfaceView = new SurfaceView(this);
         setContentView(surfaceView);
@@ -76,6 +79,7 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback {
     @Override
     protected void onResume() {
         super.onResume();
+        setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
         setupFullscreen();
         if (surfaceReady) {
             nativeStop();
@@ -133,6 +137,28 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback {
             }
         }
         return super.onGenericMotionEvent(event);
+    }
+
+    @Override
+    public boolean onKeyDown(int keyCode, KeyEvent event) {
+        if (event.getRepeatCount() > 0)
+            return true;
+        int scanCode = event.getScanCode();
+        if (scanCode != 0) {
+            nativeSendKey(0, scanCode);
+            return true;
+        }
+        return true;
+    }
+
+    @Override
+    public boolean onKeyUp(int keyCode, KeyEvent event) {
+        int scanCode = event.getScanCode();
+        if (scanCode != 0) {
+            nativeSendKey(1, scanCode);
+            return true;
+        }
+        return true;
     }
 
     private boolean isMouseEvent(MotionEvent event) {
