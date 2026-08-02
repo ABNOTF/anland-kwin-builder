@@ -2,13 +2,14 @@ package com.anland.consumer;
 
 import android.content.Context;
 import android.graphics.Canvas;
+import android.graphics.Color;
 import android.graphics.Paint;
 import android.graphics.RectF;
-import android.content.Context;
 import android.content.SharedPreferences;
 import android.os.Handler;
 import android.os.Looper;
 import android.text.TextPaint;
+import android.util.Log;
 import android.view.MotionEvent;
 import android.view.View;
 import android.widget.FrameLayout;
@@ -229,6 +230,7 @@ public class FclControllerView extends FrameLayout {
             }
         }
         requestLayout();
+        postInvalidate();
     }
 
     @Override
@@ -550,6 +552,7 @@ public class FclControllerView extends FrameLayout {
         private final Paint strokePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final TextPaint textPaint = new TextPaint(Paint.ANTI_ALIAS_FLAG);
         private final RectF rect = new RectF();
+        private boolean drawLogged = false;
 
         private boolean pressed = false;
         private boolean moved = false;
@@ -587,19 +590,27 @@ public class FclControllerView extends FrameLayout {
             super(context);
             this.data = data;
             setClickable(true);
+            setWillNotDraw(false);
             strokePaint.setStyle(Paint.Style.STROKE);
             textPaint.setTextAlign(Paint.Align.CENTER);
+            textPaint.setShadowLayer(2, 0, 1, Color.BLACK);
         }
 
         @Override
         protected void onDraw(Canvas canvas) {
+            if (!drawLogged) {
+                drawLogged = true;
+                Log.d(TAG, "draw button '" + data.text + "' "
+                        + getWidth() + "x" + getHeight()
+                        + " fill=0x" + Integer.toHexString(data.style.fillColor));
+            }
             FclController.ButtonStyle s = data.style;
             float stroke = dp((pressed ? s.strokeWidthPressed : s.strokeWidth) / 10f);
             float corner = dp((pressed ? s.cornerRadiusPressed : s.cornerRadius) / 10f);
 
             rect.set(stroke, stroke, getWidth() - stroke, getHeight() - stroke);
             fillPaint.setColor(visibleFill(pressed ? s.fillColorPressed : s.fillColor,
-                    pressed ? 0xAA666666 : 0x66000000));
+                    pressed ? 0xFF555555 : 0xAA2A2A2A));
             strokePaint.setColor(pressed ? s.strokeColorPressed : s.strokeColor);
             strokePaint.setStrokeWidth(stroke);
             canvas.drawRoundRect(rect, corner, corner, fillPaint);
@@ -845,6 +856,7 @@ public class FclControllerView extends FrameLayout {
         private final RectF rect = new RectF();
 
         private int rockerSize;
+        private boolean drawLogged = false;
         private int maxDistance;
         private float rockerOffsetX;
         private float rockerOffsetY;
@@ -862,6 +874,7 @@ public class FclControllerView extends FrameLayout {
             super(context);
             this.data = data;
             setClickable(true);
+            setWillNotDraw(false);
             strokePaint.setStyle(Paint.Style.STROKE);
             textPaint.setTextAlign(Paint.Align.CENTER);
         }
@@ -877,6 +890,11 @@ public class FclControllerView extends FrameLayout {
 
         @Override
         protected void onDraw(Canvas canvas) {
+            if (!drawLogged) {
+                drawLogged = true;
+                Log.d(TAG, "draw direction " + getWidth() + "x" + getHeight()
+                        + " style=" + data.style.styleType);
+            }
             if ("BUTTON".equals(data.style.styleType)) {
                 drawPad(canvas);
             } else {
@@ -901,7 +919,7 @@ public class FclControllerView extends FrameLayout {
             float bgStroke = dp(rs.bgStrokeWidth / 10f);
             float bgCorner = w * rs.bgCornerRadius / 1000f;
             rect.set(bgStroke, bgStroke, w - bgStroke, h - bgStroke);
-            fillPaint.setColor(visibleFill(rs.bgFillColor, 0x66000000));
+            fillPaint.setColor(visibleFill(rs.bgFillColor, 0xAA2A2A2A));
             strokePaint.setColor(rs.bgStrokeColor);
             strokePaint.setStrokeWidth(bgStroke);
             canvas.drawRoundRect(rect, bgCorner, bgCorner, fillPaint);
@@ -917,7 +935,7 @@ public class FclControllerView extends FrameLayout {
             float rCorner = rockerSize * rs.rockerCornerRadius / 1000f;
             rect.set(cx - rockerSize / 2f, cy - rockerSize / 2f,
                     cx + rockerSize / 2f, cy + rockerSize / 2f);
-            fillPaint.setColor(visibleFill(rs.rockerFillColor, 0xAA8A8A8A));
+            fillPaint.setColor(visibleFill(rs.rockerFillColor, 0xFF8A8A8A));
             strokePaint.setColor(rs.rockerStrokeColor);
             strokePaint.setStrokeWidth(rStroke);
             canvas.drawRoundRect(rect, rCorner, rCorner, fillPaint);
@@ -947,7 +965,7 @@ public class FclControllerView extends FrameLayout {
             float corner = dp((active ? bs.cornerRadiusPressed : bs.cornerRadius) / 10f);
             rect.set(x + stroke, y + stroke, x + size - stroke, y + size - stroke);
             fillPaint.setColor(visibleFill(active ? bs.fillColorPressed : bs.fillColor,
-                    active ? 0xAA666666 : 0x66000000));
+                    active ? 0xFF555555 : 0xAA2A2A2A));
             strokePaint.setColor(active ? bs.strokeColorPressed : bs.strokeColor);
             strokePaint.setStrokeWidth(stroke);
             canvas.drawRoundRect(rect, corner, corner, fillPaint);
