@@ -30,7 +30,10 @@ import android.view.WindowInsets;
 import android.view.WindowInsetsController;
 import android.view.WindowManager;
 import android.view.inputmethod.InputMethodManager;
+import android.widget.Button;
 import android.widget.FrameLayout;
+import android.widget.LinearLayout;
+import android.widget.Toast;
 import android.util.DisplayMetrics;   // ADDED
 
 import java.nio.charset.StandardCharsets;
@@ -99,6 +102,17 @@ public class MainActivity extends Activity
     private static final String KEY_FCL_ENABLED = "fcl_controller_enabled";
     private static final String KEY_FCL_CONTROLLER = "fcl_controller_id";
     private static final String DEFAULT_FCL_CONTROLLER = "00000000";
+    // Which bottom overlay is active: the original extra-keys bar or the FCL
+    // controller. Mutually exclusive (二选一).
+    private static final String KEY_BOTTOM_MODE = "bottom_overlay_mode";
+    private static final String MODE_EXTRA_KEYS = "extra_keys";
+    private static final String MODE_FCL = "fcl";
+    // FCL overlay behaviour: always lock it in the foreground, and let Back
+    // toggle it when unlocked (same pattern as the extra-keys bar).
+    private static final String KEY_FCL_ALWAYS = "fcl_always_foreground";
+    private static final String KEY_FCL_BACK_TOGGLE = "fcl_back_toggle";
+    // One-shot request from Settings to open the controller editor on resume.
+    private static final String KEY_FCL_EDIT_REQUEST = "fcl_edit_request";
     private boolean mKeyboardFloating = false;
     // Persistent "tap to open Settings" notification, toggleable in Settings > General.
     private static final String KEY_NOTIFICATION_ENABLED = "settings_notification";
@@ -124,6 +138,11 @@ public class MainActivity extends Activity
     // FCL controller overlay (hidden until toggled / enabled in Settings).
     private FclControllerView fclControllerView;
     private String mFclControllerId = "";
+    private boolean mFclHiddenByBack = false;
+    private LinearLayout fclToolbar;
+    private Button fclEditButton;
+    private Button fclResetButton;
+    private Button fclCancelButton;
 
     // ==================== 触摸板相关设置 ====================
     public static final String KEY_TOUCHPAD_MODE = "touchpad_mode";
@@ -528,6 +547,9 @@ public class MainActivity extends Activity
             FrameLayout.LayoutParams.MATCH_PARENT,
             FrameLayout.LayoutParams.MATCH_PARENT));
 
+        // Floating toolbar for the FCL controller editor (drag-to-reposition).
+        buildFclToolbar();
+
         // Reposition the virtual keyboard when the root layout size changes
         // (e.g. freeform / small-window mode resize).
         root.addOnLayoutChangeListener((v, left, top, right, bottom,
@@ -701,17 +723,39 @@ public class MainActivity extends Activity
     private void applyFclPrefs() {
         if (fclControllerView == null) return;
         SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+
+        // FCL and the original extra-keys bar are mutually exclusive.
+        if (!isFclBottomMode()) {
+            hideFclController();
+            return;
+        }
+
         boolean enabled = prefs.getBoolean(KEY_FCL_ENABLED, false);
         if (!enabled) {
             hideFclController();
             return;
         }
         loadFclController(prefs.getString(KEY_FCL_CONTROLLER, DEFAULT_FCL_CONTROLLER));
-        if (fclControllerView.hasController()
-                && fclControllerView.getVisibility() != View.VISIBLE) {
+        if (!fclControllerView.hasController()) {
+            return;
+        }
+
+        boolean alwaysLocked = prefs.getBoolean(KEY_FCL_ALWAYS, false);
+        boolean editRequested = prefs.getBoolean(KEY_FCL_EDIT_REQUEST, false);
+        boolean show = alwaysLocked || editRequested || !mFclHiddenByBack;
+        if (show) {
             fclControllerView.rebuild();
             fclControllerView.setVisibility(View.VISIBLE);
             fclControllerView.bringToFront();
+        }
+        updateFclToolbar();
+
+        // One-shot "open the editor" request from Settings.
+        if (editRequested) {
+            prefs.edit().putBoolean(KEY_FCL_EDIT_REQUEST, false).apply();
+            if (show) {
+                setFclEditMode(true);
+            }
         }
     }
 
@@ -720,21 +764,109 @@ public class MainActivity extends Activity
         if (fclControllerView == null) return;
         if (fclControllerView.getVisibility() == View.VISIBLE) {
             hideFclController();
+            mFclHiddenByBack = true;
             return;
         }
         SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
         loadFclController(prefs.getString(KEY_FCL_CONTROLLER, DEFAULT_FCL_CONTROLLER));
         if (!fclControllerView.hasController()) return;
+        mFclHiddenByBack = false;
         fclControllerView.rebuild();
         fclControllerView.setVisibility(View.VISIBLE);
         fclControllerView.bringToFront();
+        updateFclToolbar();
     }
 
     /** Hide the overlay and release every key it is holding. */
     private void hideFclController() {
         if (fclControllerView == null) return;
+        setFclEditMode(false);
         fclControllerView.releaseAll();
         fclControllerView.setVisibility(View.GONE);
+        updateFclToolbar();
+    }
+
+    /** True when the FCL controller is the selected bottom overlay. */
+    private boolean isFclBottomMode() {
+        return MODE_FCL.equals(getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+                .getString(KEY_BOTTOM_MODE, MODE_EXTRA_KEYS));
+    }
+
+    // ==================== FCL controller editor ====================
+
+    private void buildFclToolbar() {
+        fclToolbar = new LinearLayout(this);
+        fclToolbar.setOrientation(LinearLayout.HORIZONTAL);
+        fclToolbar.setGravity(Gravity.CENTER);
+        fclToolbar.setPadding(dpToPx(8), dpToPx(4), dpToPx(8), dpToPx(4));
+        fclToolbar.setBackgroundColor(0xAA000000);
+
+        fclEditButton = makeFclToolButton(v -> {
+            if (fclControllerView != null && fclControllerView.isEditMode()) {
+                fclControllerView.savePositions();
+                updateFclToolbar();
+            } else {
+                setFclEditMode(true);
+            }
+        });
+        fclResetButton = makeFclToolButton(v -> {
+            if (fclControllerView != null) {
+                fclControllerView.resetPositions();
+                updateFclToolbar();
+            }
+        });
+        fclCancelButton = makeFclToolButton(v -> {
+            if (fclControllerView != null) {
+                fclControllerView.discardPositions();
+                updateFclToolbar();
+            }
+        });
+
+        fclToolbar.addView(fclEditButton);
+        fclToolbar.addView(fclResetButton);
+        fclToolbar.addView(fclCancelButton);
+        fclToolbar.setVisibility(View.GONE);
+        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                Gravity.TOP | Gravity.END);
+        lp.setMargins(0, dpToPx(8), dpToPx(8), 0);
+        mRoot.addView(fclToolbar, lp);
+    }
+
+    private Button makeFclToolButton(View.OnClickListener listener) {
+        Button b = new Button(this);
+        b.setTextSize(12);
+        b.setAllCaps(false);
+        b.setPadding(dpToPx(10), 0, dpToPx(10), 0);
+        b.setOnClickListener(listener);
+        return b;
+    }
+
+    private void setFclEditMode(boolean on) {
+        if (fclControllerView == null) return;
+        fclControllerView.setEditMode(on);
+        updateFclToolbar();
+        if (on) {
+            Toast.makeText(this, R.string.fcl_edit_hint, Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    private void updateFclToolbar() {
+        if (fclToolbar == null || fclControllerView == null) return;
+        boolean overlayVisible = fclControllerView.getVisibility() == View.VISIBLE;
+        if (!overlayVisible) {
+            fclToolbar.setVisibility(View.GONE);
+            return;
+        }
+        boolean editing = fclControllerView.isEditMode();
+        fclToolbar.setVisibility(View.VISIBLE);
+        fclEditButton.setText(getString(editing
+                ? R.string.fcl_toolbar_done : R.string.fcl_toolbar_edit));
+        fclResetButton.setText(getString(R.string.fcl_toolbar_reset));
+        fclCancelButton.setText(getString(R.string.fcl_toolbar_cancel));
+        fclResetButton.setVisibility(editing ? View.VISIBLE : View.GONE);
+        fclCancelButton.setVisibility(editing ? View.VISIBLE : View.GONE);
     }
 
     private int dpToPx(int dp) {
@@ -1711,6 +1843,7 @@ public class MainActivity extends Activity
     //   "never"        – bar always hidden
     //   "with_keyboard" – bar tracks the soft keyboard (default)
     private boolean shouldShowBar(boolean imeVisible) {
+        if (isFclBottomMode()) return false;
         SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
         String mode = prefs.getString(KEY_EXTRA_KEYS_MODE, "always");
         switch (mode) {
@@ -1800,6 +1933,7 @@ public class MainActivity extends Activity
     // is compressed (shown) or restored (hidden).
     private void setExtraKeysBarVisible(boolean visible) {
         if (extraKeysBar == null) return;
+        if (isFclBottomMode()) visible = false;
         boolean cur = extraKeysBar.getVisibility() == View.VISIBLE;
         if (cur == visible) return;
         extraKeysBar.setVisibility(visible ? View.VISIBLE : View.GONE);
@@ -1852,6 +1986,7 @@ public class MainActivity extends Activity
     // Toggle the extra-keys bar on its own (e.g. from the Back key), independent of
     // the soft keyboard. Showing it just compresses the display area above the bar.
     private void toggleExtraKeysBar() {
+        if (isFclBottomMode()) return;
         boolean visible = extraKeysBar != null
             && extraKeysBar.getVisibility() == View.VISIBLE;
         setExtraKeysBarVisible(!visible);
@@ -1998,6 +2133,23 @@ public class MainActivity extends Activity
             return true;
         }
 
+        // FCL bottom mode: Back toggles the overlay unless it is locked to the
+        // foreground, in which case Back is swallowed so the overlay stays up.
+        if (keyCode == KeyEvent.KEYCODE_BACK && isFclBottomMode()
+                && prefs.getBoolean(KEY_FCL_ENABLED, false)) {
+            if (prefs.getBoolean(KEY_FCL_ALWAYS, false)) {
+                if (fclControllerView == null
+                        || fclControllerView.getVisibility() != View.VISIBLE) {
+                    applyFclPrefs();
+                }
+                return true;
+            }
+            if (prefs.getBoolean(KEY_FCL_BACK_TOGGLE, true)) {
+                toggleFclControllerOverlay();
+                return true;
+            }
+        }
+
         // Back key toggles the extra-keys bar (without opening the soft keyboard)
         // when enabled in settings. Leaves the default swallow behaviour otherwise.
         if (keyCode == KeyEvent.KEYCODE_BACK
@@ -2016,6 +2168,18 @@ public class MainActivity extends Activity
     // unexpectedly finish via gesture navigation.
     @Override
     public void onBackPressed() {
+        // Same FCL handling for OEMs that dispatch Back via onBackPressed().
+        SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+        if (isFclBottomMode() && prefs.getBoolean(KEY_FCL_ENABLED, false)) {
+            boolean locked = prefs.getBoolean(KEY_FCL_ALWAYS, false);
+            if (!locked && prefs.getBoolean(KEY_FCL_BACK_TOGGLE, true)) {
+                toggleFclControllerOverlay();
+            } else if (locked && (fclControllerView == null
+                    || fclControllerView.getVisibility() != View.VISIBLE)) {
+                applyFclPrefs();
+            }
+            return;
+        }
         if (mRoot != null && mRoot.hasPointerCapture()) {
             releasePointerCapture(true);
             // There is no KeyEvent on this OEM path. Use a wildcard so a trailing

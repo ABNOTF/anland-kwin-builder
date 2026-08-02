@@ -4,14 +4,18 @@ import android.content.Context;
 import android.graphics.Canvas;
 import android.graphics.Paint;
 import android.graphics.RectF;
+import android.content.Context;
+import android.content.SharedPreferences;
 import android.os.Handler;
 import android.os.Looper;
-import android.text.Layout;
-import android.text.StaticLayout;
 import android.text.TextPaint;
 import android.view.MotionEvent;
 import android.view.View;
 import android.widget.FrameLayout;
+
+import org.json.JSONArray;
+import org.json.JSONException;
+import org.json.JSONObject;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -66,6 +70,13 @@ public class FclControllerView extends FrameLayout {
     private FclController controller;
     private Bridge bridge;
     private float mouseSensitivity = 1f;
+    private boolean editMode = false;
+
+    // Position overrides: control id -> [x thousandths, y thousandths].
+    // Saved overrides survive rebuilds; pending ones only exist while editing.
+    private final Map<String, int[]> savedPositions = new HashMap<>();
+    private final Map<String, int[]> pendingPositions = new HashMap<>();
+    private static final String PREFS_NAME = "anland_settings";
 
     public FclControllerView(Context context) {
         super(context);
@@ -85,6 +96,47 @@ public class FclControllerView extends FrameLayout {
 
     public boolean hasController() {
         return controller != null;
+    }
+
+    /** Toggle layout-editing mode: controls can be dragged and repositioned. */
+    public void setEditMode(boolean editMode) {
+        this.editMode = editMode;
+        if (!editMode) {
+            pendingPositions.clear();
+        }
+        invalidate();
+    }
+
+    public boolean isEditMode() {
+        return editMode;
+    }
+
+    /** Persist pending drag positions as the saved layout for this controller. */
+    public void savePositions() {
+        if (controller == null) {
+            return;
+        }
+        savedPositions.putAll(pendingPositions);
+        pendingPositions.clear();
+        writePositions();
+        setEditMode(false);
+        rebuild();
+    }
+
+    /** Discard pending drag positions and go back to the saved layout. */
+    public void discardPositions() {
+        pendingPositions.clear();
+        setEditMode(false);
+        rebuild();
+    }
+
+    /** Clear all saved position overrides and restore the original controller JSON layout. */
+    public void resetPositions() {
+        savedPositions.clear();
+        pendingPositions.clear();
+        writePositions();
+        setEditMode(false);
+        rebuild();
     }
 
     public void setMouseSensitivity(float sensitivity) {
@@ -125,6 +177,7 @@ public class FclControllerView extends FrameLayout {
         removeAllViews();
         controls.clear();
         groupVisible.clear();
+        loadPositions();
 
         for (FclController.ViewGroup group : controller.viewGroups) {
             boolean visible = "VISIBLE".equals(group.visibility);
@@ -209,15 +262,78 @@ public class FclControllerView extends FrameLayout {
             int y = 0;
             if (child instanceof FclButtonView) {
                 FclController.BaseInfo base = ((FclButtonView) child).data.baseInfo;
-                x = base.xPx(w, cw);
-                y = base.yPx(h, ch);
+                int[] pos = positionFor(((FclButtonView) child).data.id, base, w, h);
+                x = pos[0] <= 0 ? 0 : (int) ((w - cw) * (pos[0] / 1000f));
+                y = pos[1] <= 0 ? 0 : (int) ((h - ch) * (pos[1] / 1000f));
             } else if (child instanceof FclDirectionView) {
                 FclController.BaseInfo base = ((FclDirectionView) child).data.baseInfo;
-                x = base.xPx(w, cw);
-                y = base.yPx(h, ch);
+                int[] pos = positionFor(((FclDirectionView) child).data.id, base, w, h);
+                x = pos[0] <= 0 ? 0 : (int) ((w - cw) * (pos[0] / 1000f));
+                y = pos[1] <= 0 ? 0 : (int) ((h - ch) * (pos[1] / 1000f));
             }
             child.layout(x, y, x + cw, y + ch);
         }
+    }
+
+    private int[] positionFor(String id, FclController.BaseInfo base, int w, int h) {
+        int[] p = pendingPositions.get(id);
+        if (p == null) {
+            p = savedPositions.get(id);
+        }
+        if (p != null) {
+            return p;
+        }
+        return new int[]{base.xPosition, base.yPosition};
+    }
+
+    /** Record a drag result (in thousandths of the free area) while editing. */
+    public void setPendingPosition(String id, int xThousandths, int yThousandths) {
+        pendingPositions.put(id, new int[]{
+                Math.max(0, Math.min(1000, xThousandths)),
+                Math.max(0, Math.min(1000, yThousandths))});
+    }
+
+    private void loadPositions() {
+        savedPositions.clear();
+        if (controller == null) {
+            return;
+        }
+        SharedPreferences prefs = getContext().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        String json = prefs.getString("fcl_pos_" + controller.id, null);
+        if (json == null || json.isEmpty()) {
+            return;
+        }
+        try {
+            JSONObject obj = new JSONObject(json);
+            JSONArray ids = obj.names();
+            if (ids == null) {
+                return;
+            }
+            for (int i = 0; i < ids.length(); i++) {
+                String id = ids.getString(i);
+                JSONArray arr = obj.optJSONArray(id);
+                if (arr != null && arr.length() >= 2) {
+                    savedPositions.put(id, new int[]{arr.optInt(0, 0), arr.optInt(1, 0)});
+                }
+            }
+        } catch (JSONException ignored) {
+            // Corrupt override data: fall back to the original layout.
+        }
+    }
+
+    private void writePositions() {
+        if (controller == null) {
+            return;
+        }
+        SharedPreferences prefs = getContext().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        JSONObject obj = new JSONObject();
+        for (Map.Entry<String, int[]> e : savedPositions.entrySet()) {
+            try {
+                obj.put(e.getKey(), new JSONArray().put(e.getValue()[0]).put(e.getValue()[1]));
+            } catch (JSONException ignored) {
+            }
+        }
+        prefs.edit().putString("fcl_pos_" + controller.id, obj.toString()).apply();
     }
 
     private int childWidth(View child, int w, int h) {
@@ -304,22 +420,37 @@ public class FclControllerView extends FrameLayout {
             canvas.drawRoundRect(rect, corner, corner, fillPaint);
             canvas.drawRoundRect(rect, corner, corner, strokePaint);
 
+            if (editMode) {
+                float eb = dp(2);
+                rect.set(eb, eb, getWidth() - eb, getHeight() - eb);
+                strokePaint.setColor(0xFFFF4444);
+                strokePaint.setStrokeWidth(eb);
+                canvas.drawRoundRect(rect, corner, corner, strokePaint);
+            }
+
             String text = data.text;
             if (text == null || text.isEmpty()) {
                 return;
             }
             textPaint.setColor(pressed ? s.textColorPressed : s.textColor);
             textPaint.setTextSize((pressed ? s.textSizePressed : s.textSize) * density);
-            StaticLayout layout = new StaticLayout(text, textPaint, getWidth(),
-                    Layout.Alignment.ALIGN_CENTER, 1f, 0f, false);
-            canvas.save();
-            canvas.translate(0, (getHeight() - layout.getHeight()) / 2f);
-            layout.draw(canvas);
-            canvas.restore();
+            textPaint.setTextAlign(Paint.Align.CENTER);
+            String[] lines = text.split("\n", -1);
+            float lineHeight = textPaint.getFontSpacing();
+            float totalHeight = lineHeight * lines.length;
+            float y0 = (getHeight() - totalHeight) / 2f;
+            for (int i = 0; i < lines.length; i++) {
+                float baseline = y0 + lineHeight * (i + 0.5f)
+                        - (textPaint.ascent() + textPaint.descent()) / 2f;
+                canvas.drawText(lines[i], getWidth() / 2f, baseline, textPaint);
+            }
         }
 
         @Override
         public boolean onTouchEvent(MotionEvent event) {
+            if (editMode) {
+                return handleEditTouch(event);
+            }
             switch (event.getActionMasked()) {
                 case MotionEvent.ACTION_DOWN:
                     pressed = true;
@@ -380,6 +511,40 @@ public class FclControllerView extends FrameLayout {
                     }
                     pressed = false;
                     invalidate();
+                    return true;
+            }
+            return true;
+        }
+
+        private boolean handleEditTouch(MotionEvent event) {
+            switch (event.getActionMasked()) {
+                case MotionEvent.ACTION_DOWN:
+                    downX = event.getX();
+                    downY = event.getY();
+                    moved = false;
+                    return true;
+                case MotionEvent.ACTION_MOVE:
+                    float dx = event.getX() - downX;
+                    float dy = event.getY() - downY;
+                    if (Math.abs(dx) > 2 || Math.abs(dy) > 2) {
+                        moved = true;
+                    }
+                    float nx = clamp(getX() + dx, 0, getParentWidth() - getWidth());
+                    float ny = clamp(getY() + dy, 0, getParentHeight() - getHeight());
+                    setX(nx);
+                    setY(ny);
+                    return true;
+                case MotionEvent.ACTION_UP:
+                case MotionEvent.ACTION_CANCEL:
+                    if (moved) {
+                        int pw = getParentWidth();
+                        int ph = getParentHeight();
+                        int xTh = pw > getWidth()
+                                ? Math.round(1000f * getX() / (pw - getWidth())) : 0;
+                        int yTh = ph > getHeight()
+                                ? Math.round(1000f * getY() / (ph - getHeight())) : 0;
+                        setPendingPosition(data.id, xTh, yTh);
+                    }
                     return true;
             }
             return true;
@@ -532,6 +697,13 @@ public class FclControllerView extends FrameLayout {
             } else {
                 drawRocker(canvas);
             }
+            if (editMode) {
+                float eb = dp(2);
+                rect.set(eb, eb, getWidth() - eb, getHeight() - eb);
+                strokePaint.setColor(0xFFFF4444);
+                strokePaint.setStrokeWidth(eb);
+                canvas.drawRoundRect(rect, eb, eb, strokePaint);
+            }
         }
 
         private void drawRocker(Canvas canvas) {
@@ -602,6 +774,9 @@ public class FclControllerView extends FrameLayout {
 
         @Override
         public boolean onTouchEvent(MotionEvent event) {
+            if (editMode) {
+                return handleEditTouch(event);
+            }
             switch (event.getActionMasked()) {
                 case MotionEvent.ACTION_DOWN:
                     downX = event.getX();
@@ -645,6 +820,42 @@ public class FclControllerView extends FrameLayout {
                     rockerOffsetX = 0;
                     rockerOffsetY = 0;
                     invalidate();
+                    return true;
+            }
+            return true;
+        }
+
+        private boolean handleEditTouch(MotionEvent event) {
+            switch (event.getActionMasked()) {
+                case MotionEvent.ACTION_DOWN:
+                    downX = event.getX();
+                    downY = event.getY();
+                    moved = false;
+                    return true;
+                case MotionEvent.ACTION_MOVE:
+                    float dx = event.getX() - downX;
+                    float dy = event.getY() - downY;
+                    if (Math.abs(dx) > 2 || Math.abs(dy) > 2) {
+                        moved = true;
+                    }
+                    float nx = clamp(getX() + dx, 0,
+                            FclControllerView.this.getWidth() - getWidth());
+                    float ny = clamp(getY() + dy, 0,
+                            FclControllerView.this.getHeight() - getHeight());
+                    setX(nx);
+                    setY(ny);
+                    return true;
+                case MotionEvent.ACTION_UP:
+                case MotionEvent.ACTION_CANCEL:
+                    if (moved) {
+                        int pw = FclControllerView.this.getWidth();
+                        int ph = FclControllerView.this.getHeight();
+                        int xTh = pw > getWidth()
+                                ? Math.round(1000f * getX() / (pw - getWidth())) : 0;
+                        int yTh = ph > getHeight()
+                                ? Math.round(1000f * getY() / (ph - getHeight())) : 0;
+                        setPendingPosition(data.id, xTh, yTh);
+                    }
                     return true;
             }
             return true;

@@ -62,6 +62,13 @@ public class SettingsActivity extends Activity {
     private static final String KEY_FCL_ENABLED = "fcl_controller_enabled";
     private static final String KEY_FCL_CONTROLLER = "fcl_controller_id";
     private static final String[] FCL_CONTROLLER_IDS = {"00000000", "899a1e2b"};
+    // Bottom overlay mode: original extra-keys bar vs FCL controller (二选一).
+    private static final String KEY_BOTTOM_MODE = "bottom_overlay_mode";
+    private static final String[] BOTTOM_MODES = {"extra_keys", "fcl"};
+    // FCL overlay lock / Back-toggle / one-shot editor request.
+    private static final String KEY_FCL_ALWAYS = "fcl_always_foreground";
+    private static final String KEY_FCL_BACK_TOGGLE = "fcl_back_toggle";
+    private static final String KEY_FCL_EDIT_REQUEST = "fcl_edit_request";
     private static final String KEY_NOTIFICATION_ENABLED = "settings_notification";
     private static final String KEY_ORIENTATION = "screen_orientation";
     private static final String[] ORIENTATION_VALUES = {"default", "landscape", "portrait"};
@@ -352,6 +359,41 @@ public class SettingsActivity extends Activity {
         header.setPadding(0, dp(24), 0, dp(8));
         root.addView(header);
 
+        // === Bottom overlay mode: original bar or FCL controller (二选一) ===
+        TextView modeLabel = new TextView(this);
+        modeLabel.setText(R.string.bottom_overlay_label);
+        modeLabel.setTextSize(14);
+        modeLabel.setPadding(0, dp(8), 0, dp(4));
+        root.addView(modeLabel);
+
+        Spinner modeSpinner = new Spinner(this);
+        modeSpinner.setAdapter(new ArrayAdapter<>(this,
+            android.R.layout.simple_spinner_dropdown_item,
+            getResources().getStringArray(R.array.bottom_overlay_options)));
+        String curMode = prefs.getString(KEY_BOTTOM_MODE, BOTTOM_MODES[0]);
+        int modeIdx = 0;
+        for (int i = 0; i < BOTTOM_MODES.length; i++) {
+            if (BOTTOM_MODES[i].equals(curMode)) { modeIdx = i; break; }
+        }
+        modeSpinner.setSelection(modeIdx);
+        modeSpinner.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+            @Override
+            public void onItemSelected(AdapterView<?> parent, View v, int pos, long id) {
+                getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
+                    .putString(KEY_BOTTOM_MODE, BOTTOM_MODES[pos]).apply();
+            }
+            @Override
+            public void onNothingSelected(AdapterView<?> parent) {}
+        });
+        root.addView(modeSpinner);
+
+        TextView modeHint = new TextView(this);
+        modeHint.setText(R.string.bottom_overlay_hint);
+        modeHint.setTextSize(12);
+        modeHint.setTextColor(Color.GRAY);
+        modeHint.setPadding(0, dp(4), 0, dp(8));
+        root.addView(modeHint);
+
         Switch fclSwitch = new Switch(this);
         fclSwitch.setText(R.string.fcl_controller_switch);
         fclSwitch.setTextSize(14);
@@ -361,6 +403,42 @@ public class SettingsActivity extends Activity {
             getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
                 .putBoolean(KEY_FCL_ENABLED, checked).apply());
         root.addView(fclSwitch);
+
+        // === Always lock the overlay in the foreground ===
+        Switch alwaysSwitch = new Switch(this);
+        alwaysSwitch.setText(R.string.fcl_always_switch);
+        alwaysSwitch.setTextSize(14);
+        alwaysSwitch.setPadding(0, dp(16), 0, 0);
+        alwaysSwitch.setChecked(prefs.getBoolean(KEY_FCL_ALWAYS, false));
+        alwaysSwitch.setOnCheckedChangeListener((v, checked) ->
+            getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
+                .putBoolean(KEY_FCL_ALWAYS, checked).apply());
+        root.addView(alwaysSwitch);
+
+        TextView alwaysHint = new TextView(this);
+        alwaysHint.setText(R.string.fcl_always_hint);
+        alwaysHint.setTextSize(12);
+        alwaysHint.setTextColor(Color.GRAY);
+        alwaysHint.setPadding(0, dp(4), 0, dp(8));
+        root.addView(alwaysHint);
+
+        // === Back key toggles the FCL overlay when not locked ===
+        Switch backToggleSwitch = new Switch(this);
+        backToggleSwitch.setText(R.string.fcl_back_toggle_switch);
+        backToggleSwitch.setTextSize(14);
+        backToggleSwitch.setPadding(0, dp(16), 0, 0);
+        backToggleSwitch.setChecked(prefs.getBoolean(KEY_FCL_BACK_TOGGLE, true));
+        backToggleSwitch.setOnCheckedChangeListener((v, checked) ->
+            getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
+                .putBoolean(KEY_FCL_BACK_TOGGLE, checked).apply());
+        root.addView(backToggleSwitch);
+
+        TextView backToggleHint = new TextView(this);
+        backToggleHint.setText(R.string.fcl_back_toggle_hint);
+        backToggleHint.setTextSize(12);
+        backToggleHint.setTextColor(Color.GRAY);
+        backToggleHint.setPadding(0, dp(4), 0, dp(8));
+        root.addView(backToggleHint);
 
         TextView label = new TextView(this);
         label.setText(R.string.fcl_controller_label);
@@ -388,6 +466,37 @@ public class SettingsActivity extends Activity {
             public void onNothingSelected(AdapterView<?> parent) {}
         });
         root.addView(spinner);
+
+        // === Editor / reset actions ===
+        LinearLayout fclButtons = new LinearLayout(this);
+        fclButtons.setOrientation(LinearLayout.HORIZONTAL);
+        fclButtons.setPadding(0, dp(8), 0, 0);
+
+        Button editLayoutBtn = new Button(this);
+        editLayoutBtn.setText(R.string.fcl_edit_button);
+        editLayoutBtn.setOnClickListener(v -> {
+            SharedPreferences e = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+            e.edit()
+                .putBoolean(KEY_FCL_ENABLED, true)
+                .putString(KEY_BOTTOM_MODE, "fcl")
+                .putBoolean(KEY_FCL_EDIT_REQUEST, true)
+                .apply();
+            Toast.makeText(this, R.string.fcl_edit_requested, Toast.LENGTH_SHORT).show();
+        });
+        fclButtons.addView(editLayoutBtn);
+
+        Button resetLayoutBtn = new Button(this);
+        resetLayoutBtn.setText(R.string.fcl_reset_layout);
+        resetLayoutBtn.setOnClickListener(v -> {
+            String ctrlId = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+                .getString(KEY_FCL_CONTROLLER, FCL_CONTROLLER_IDS[0]);
+            getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
+                .remove("fcl_pos_" + ctrlId).apply();
+            Toast.makeText(this, R.string.fcl_reset_done, Toast.LENGTH_SHORT).show();
+        });
+        fclButtons.addView(resetLayoutBtn);
+
+        root.addView(fclButtons);
 
         TextView hint = new TextView(this);
         hint.setText(R.string.fcl_controller_hint);
