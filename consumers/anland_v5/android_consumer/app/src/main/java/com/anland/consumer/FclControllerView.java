@@ -598,7 +598,8 @@ public class FclControllerView extends FrameLayout {
             float corner = dp((pressed ? s.cornerRadiusPressed : s.cornerRadius) / 10f);
 
             rect.set(stroke, stroke, getWidth() - stroke, getHeight() - stroke);
-            fillPaint.setColor(pressed ? s.fillColorPressed : s.fillColor);
+            fillPaint.setColor(visibleFill(pressed ? s.fillColorPressed : s.fillColor,
+                    pressed ? 0xAA666666 : 0x66000000));
             strokePaint.setColor(pressed ? s.strokeColorPressed : s.strokeColor);
             strokePaint.setStrokeWidth(stroke);
             canvas.drawRoundRect(rect, corner, corner, fillPaint);
@@ -900,7 +901,7 @@ public class FclControllerView extends FrameLayout {
             float bgStroke = dp(rs.bgStrokeWidth / 10f);
             float bgCorner = w * rs.bgCornerRadius / 1000f;
             rect.set(bgStroke, bgStroke, w - bgStroke, h - bgStroke);
-            fillPaint.setColor(rs.bgFillColor);
+            fillPaint.setColor(visibleFill(rs.bgFillColor, 0x66000000));
             strokePaint.setColor(rs.bgStrokeColor);
             strokePaint.setStrokeWidth(bgStroke);
             canvas.drawRoundRect(rect, bgCorner, bgCorner, fillPaint);
@@ -916,7 +917,7 @@ public class FclControllerView extends FrameLayout {
             float rCorner = rockerSize * rs.rockerCornerRadius / 1000f;
             rect.set(cx - rockerSize / 2f, cy - rockerSize / 2f,
                     cx + rockerSize / 2f, cy + rockerSize / 2f);
-            fillPaint.setColor(rs.rockerFillColor);
+            fillPaint.setColor(visibleFill(rs.rockerFillColor, 0xAA8A8A8A));
             strokePaint.setColor(rs.rockerStrokeColor);
             strokePaint.setStrokeWidth(rStroke);
             canvas.drawRoundRect(rect, rCorner, rCorner, fillPaint);
@@ -945,7 +946,8 @@ public class FclControllerView extends FrameLayout {
             float stroke = dp((active ? bs.strokeWidthPressed : bs.strokeWidth) / 10f);
             float corner = dp((active ? bs.cornerRadiusPressed : bs.cornerRadius) / 10f);
             rect.set(x + stroke, y + stroke, x + size - stroke, y + size - stroke);
-            fillPaint.setColor(active ? bs.fillColorPressed : bs.fillColor);
+            fillPaint.setColor(visibleFill(active ? bs.fillColorPressed : bs.fillColor,
+                    active ? 0xAA666666 : 0x66000000));
             strokePaint.setColor(active ? bs.strokeColorPressed : bs.strokeColor);
             strokePaint.setStrokeWidth(stroke);
             canvas.drawRoundRect(rect, corner, corner, fillPaint);
@@ -1196,5 +1198,10 @@ public class FclControllerView extends FrameLayout {
 
     private static float clamp(float v, float min, float max) {
         return Math.max(min, Math.min(max, v));
+    }
+
+    /** FCL controllers often use fully transparent fills; keep them tappable but visible. */
+    private static int visibleFill(int color, int fallback) {
+        return ((color >>> 24) == 0) ? fallback : color;
     }
 }
