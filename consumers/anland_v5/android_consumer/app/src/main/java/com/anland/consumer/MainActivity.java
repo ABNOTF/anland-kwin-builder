@@ -726,12 +726,17 @@ public class MainActivity extends Activity
         SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
 
         // FCL and the original extra-keys bar are mutually exclusive.
-        if (!isFclBottomMode()) {
+        boolean fclMode = isFclBottomMode();
+        boolean enabled = prefs.getBoolean(KEY_FCL_ENABLED, false);
+        boolean alwaysLocked = prefs.getBoolean(KEY_FCL_ALWAYS, false);
+        Log.d(TAG, "applyFclPrefs mode=" + (fclMode ? "fcl" : "extra_keys")
+                + " enabled=" + enabled + " always=" + alwaysLocked
+                + " hiddenByBack=" + mFclHiddenByBack);
+        if (!fclMode) {
             hideFclController();
             return;
         }
 
-        boolean enabled = prefs.getBoolean(KEY_FCL_ENABLED, false);
         if (!enabled) {
             hideFclController();
             return;
@@ -741,11 +746,10 @@ public class MainActivity extends Activity
             return;
         }
 
-        boolean alwaysLocked = prefs.getBoolean(KEY_FCL_ALWAYS, false);
-        boolean show = alwaysLocked || !mFclHiddenByBack;
-        if (show) {
-            showFclOverlayWindow();
-        }
+        // On resume, an enabled FCL overlay is always shown; a manual Back-hide
+        // only applies until the next resume so the overlay can never get stuck
+        // in a hidden state.
+        showFclOverlayWindow();
     }
 
     /** Manual toggle (extra-keys bar "FCL" key); works regardless of the switch. */

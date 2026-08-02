@@ -410,9 +410,16 @@ public class SettingsActivity extends Activity {
         fclSwitch.setTextSize(14);
         fclSwitch.setPadding(0, dp(8), 0, 0);
         fclSwitch.setChecked(prefs.getBoolean(KEY_FCL_ENABLED, false));
-        fclSwitch.setOnCheckedChangeListener((v, checked) ->
-            getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
-                .putBoolean(KEY_FCL_ENABLED, checked).apply());
+        fclSwitch.setOnCheckedChangeListener((v, checked) -> {
+            SharedPreferences.Editor e = getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit();
+            e.putBoolean(KEY_FCL_ENABLED, checked);
+            if (checked) {
+                // Enabling FCL automatically selects the FCL bottom overlay,
+                // otherwise the overlay stays hidden by the exclusive-mode rule.
+                e.putString(KEY_BOTTOM_MODE, "fcl");
+            }
+            e.apply();
+        });
         root.addView(fclSwitch);
 
         // === Always lock the overlay in the foreground ===
