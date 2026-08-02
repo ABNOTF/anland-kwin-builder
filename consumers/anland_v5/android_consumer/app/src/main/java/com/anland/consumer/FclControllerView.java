@@ -258,6 +258,14 @@ public class FclControllerView extends FrameLayout {
         }
     }
 
+    @Override
+    protected void onSizeChanged(int w, int h, int oldw, int oldh) {
+        super.onSizeChanged(w, h, oldw, oldh);
+        if (w > 0 && h > 0 && controller != null && getVisibility() == VISIBLE) {
+            rebuild();
+        }
+    }
+
     /**
      * Multi-touch routing. While the overlay is visible every pointer is handled
      * here: pointers inside a control go to that control (so several buttons can

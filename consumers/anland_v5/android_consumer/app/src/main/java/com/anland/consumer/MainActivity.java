@@ -12,6 +12,7 @@ import android.content.pm.ActivityInfo;
 import android.content.pm.PackageManager;
 import android.hardware.display.DisplayManager;
 import android.content.SharedPreferences;
+import android.graphics.PixelFormat;
 import android.os.Build;
 import android.os.Bundle;
 import android.util.Log;
@@ -133,6 +134,8 @@ public class MainActivity extends Activity
     // FCL controller overlay (hidden until toggled / enabled in Settings).
     private FclControllerView fclControllerView;
     private boolean mFclHiddenByBack = false;
+    private WindowManager fclWindowManager;
+    private boolean fclWindowAdded = false;
 
     // ==================== 触摸板相关设置 ====================
     public static final String KEY_TOUCHPAD_MODE = "touchpad_mode";
@@ -537,9 +540,11 @@ public class MainActivity extends Activity
             }
         });
         fclControllerView.setVisibility(View.GONE);
-        root.addView(fclControllerView, new FrameLayout.LayoutParams(
-            FrameLayout.LayoutParams.MATCH_PARENT,
-            FrameLayout.LayoutParams.MATCH_PARENT));
+        // The FCL overlay lives in its OWN window (TYPE_APPLICATION_PANEL). A
+        // sibling view in this window cannot be composited above the SurfaceView
+        // on this device (verified with an opaque test layer), while a separate
+        // application window always composites above the activity window.
+        fclWindowManager = getSystemService(WindowManager.class);
         // Route touches outside FCL controls to the normal surface handler so a
         // finger on a button and another finger swiping the screen work together.
         fclControllerView.setSurfaceTouchForwarder(this::onTouchEvent);
@@ -739,11 +744,7 @@ public class MainActivity extends Activity
         boolean alwaysLocked = prefs.getBoolean(KEY_FCL_ALWAYS, false);
         boolean show = alwaysLocked || !mFclHiddenByBack;
         if (show) {
-            fclControllerView.rebuild();
-            fclControllerView.setVisibility(View.VISIBLE);
-            // NOTE: no bringToFront() here. With a SurfaceView in the window,
-            // bringToFront() on a sibling is known to push the surface above the
-            // whole app window, hiding every overlay while touches still work.
+            showFclOverlayWindow();
         }
     }
 
@@ -759,8 +760,7 @@ public class MainActivity extends Activity
         loadFclController(prefs.getString(KEY_FCL_CONTROLLER, DEFAULT_FCL_CONTROLLER));
         if (!fclControllerView.hasController()) return;
         mFclHiddenByBack = false;
-        fclControllerView.rebuild();
-        fclControllerView.setVisibility(View.VISIBLE);
+        showFclOverlayWindow();
     }
 
     /** Hide the overlay and release every key it is holding. */
@@ -768,12 +768,51 @@ public class MainActivity extends Activity
         if (fclControllerView == null) return;
         fclControllerView.releaseAll();
         fclControllerView.setVisibility(View.GONE);
+        removeFclOverlayWindow();
+    }
+
+    /** Add the FCL overlay as a separate window above the activity window. */
+    private void showFclOverlayWindow() {
+        if (fclControllerView == null || fclWindowManager == null) return;
+        if (!fclWindowAdded) {
+            WindowManager.LayoutParams lp = new WindowManager.LayoutParams(
+                    WindowManager.LayoutParams.MATCH_PARENT,
+                    WindowManager.LayoutParams.MATCH_PARENT,
+                    WindowManager.LayoutParams.TYPE_APPLICATION_PANEL,
+                    WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                            | WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
+                            | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+                    PixelFormat.TRANSLUCENT);
+            lp.token = getWindow().getAttributes().token;
+            lp.gravity = Gravity.TOP | Gravity.START;
+            try {
+                fclWindowManager.addView(fclControllerView, lp);
+                fclWindowAdded = true;
+                Log.d(TAG, "FCL overlay window added");
+            } catch (Exception e) {
+                Log.e(TAG, "add FCL overlay window failed", e);
+                return;
+            }
+        }
+        fclControllerView.rebuild();
+        fclControllerView.setVisibility(View.VISIBLE);
     }
 
     /** True when the FCL controller is the selected bottom overlay. */
     private boolean isFclBottomMode() {
         return MODE_FCL.equals(getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
                 .getString(KEY_BOTTOM_MODE, MODE_EXTRA_KEYS));
+    }
+
+    private void removeFclOverlayWindow() {
+        if (fclWindowAdded && fclWindowManager != null && fclControllerView != null) {
+            try {
+                fclWindowManager.removeView(fclControllerView);
+            } catch (Exception ignored) {
+            }
+            fclWindowAdded = false;
+            Log.d(TAG, "FCL overlay window removed");
+        }
     }
 
     private int dpToPx(int dp) {
