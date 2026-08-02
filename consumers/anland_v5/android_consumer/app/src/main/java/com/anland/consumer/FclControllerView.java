@@ -9,7 +9,6 @@ import android.content.SharedPreferences;
 import android.os.Handler;
 import android.os.Looper;
 import android.text.TextPaint;
-import android.util.Log;
 import android.view.MotionEvent;
 import android.view.View;
 import android.widget.FrameLayout;
@@ -85,13 +84,6 @@ public class FclControllerView extends FrameLayout {
     private final List<View> passThroughViews = new ArrayList<>();
     private final Map<View, Integer> controlPointers = new HashMap<>();
     private boolean surfaceDown = false;
-    private final Paint debugPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
-    private int lastLoggedMeasureW = -1;
-    private int lastLoggedMeasureH = -1;
-    private int lastLoggedLayoutW = -1;
-    private int lastLoggedLayoutH = -1;
-    private int touchLogCount = 0;
-    private int overlayDrawCount = 0;
 
     // Position overrides: control id -> [x thousandths, y thousandths].
     // Saved overrides survive rebuilds; pending ones only exist while editing.
@@ -201,16 +193,11 @@ public class FclControllerView extends FrameLayout {
         if (w <= 0 || h <= 0) {
             // A GONE view is never measured (width/height stay 0); rebuilding is
             // triggered again from setVisibility(VISIBLE) once it can be laid out.
-            Log.d(TAG, "rebuild: size " + w + "x" + h
-                    + " visibility=" + getVisibility() + " -> post/return");
             if (getVisibility() != GONE) {
                 post(this::rebuild);
             }
             return;
         }
-        Log.d(TAG, "rebuild: size " + w + "x" + h
-                + " controller=" + controller.id
-                + " groups=" + controller.viewGroups.size());
 
         removeAllViews();
         controls.clear();
@@ -243,16 +230,11 @@ public class FclControllerView extends FrameLayout {
         }
         requestLayout();
         postInvalidate();
-        Log.d(TAG, "rebuild done: controls=" + controls.size()
-                + " children=" + getChildCount());
     }
 
     @Override
     public void setVisibility(int visibility) {
-        int old = getVisibility();
         super.setVisibility(visibility);
-        Log.d(TAG, "setVisibility: " + old + " -> " + visibility
-                + " controller=" + (controller != null));
         if (visibility == VISIBLE && controller != null) {
             rebuild();
         }
@@ -279,32 +261,8 @@ public class FclControllerView extends FrameLayout {
                 || surfaceForwarder == null || hitPassThrough(ev)) {
             return super.dispatchTouchEvent(ev);
         }
-        if (touchLogCount < 30) {
-            touchLogCount++;
-            int idx = ev.getActionIndex();
-            View c = controlAt(ev.getX(idx), ev.getY(idx));
-            Log.d(TAG, "touch #" + touchLogCount + " action=" + ev.getActionMasked()
-                    + " (" + (int) ev.getX(idx) + "," + (int) ev.getY(idx) + ")"
-                    + " control=" + (c == null ? "surface" : "hit"));
-        }
         routeTouchEvent(ev);
         return true;
-    }
-
-    @Override
-    protected void onDraw(Canvas canvas) {
-        super.onDraw(canvas);
-        if (overlayDrawCount < 10) {
-            overlayDrawCount++;
-            Log.d(TAG, "overlay onDraw #" + overlayDrawCount + ": "
-                    + getWidth() + "x" + getHeight() + " children=" + getChildCount());
-        }
-        // Layer self-test: an OPAQUE red background is impossible to miss. If this
-        // is invisible on the device, the SurfaceView is covering the app window.
-        canvas.drawColor(0xFFFF0000);
-        debugPaint.setColor(Color.WHITE);
-        debugPaint.setTextSize(dp(24));
-        canvas.drawText("FCL LAYER TEST", dp(12), dp(44), debugPaint);
     }
 
     private boolean hitPassThrough(MotionEvent ev) {
@@ -472,11 +430,6 @@ public class FclControllerView extends FrameLayout {
             w = getResources().getDisplayMetrics().widthPixels;
             h = getResources().getDisplayMetrics().heightPixels;
         }
-        if (w != lastLoggedMeasureW || h != lastLoggedMeasureH) {
-            lastLoggedMeasureW = w;
-            lastLoggedMeasureH = h;
-            Log.d(TAG, "onMeasure " + w + "x" + h + " children=" + getChildCount());
-        }
         for (int i = 0; i < getChildCount(); i++) {
             View child = getChildAt(i);
             int cw = childWidth(child, w, h);
@@ -491,11 +444,6 @@ public class FclControllerView extends FrameLayout {
     protected void onLayout(boolean changed, int left, int top, int right, int bottom) {
         int w = right - left;
         int h = bottom - top;
-        if (w != lastLoggedLayoutW || h != lastLoggedLayoutH) {
-            lastLoggedLayoutW = w;
-            lastLoggedLayoutH = h;
-            Log.d(TAG, "onLayout " + w + "x" + h + " children=" + getChildCount());
-        }
         for (int i = 0; i < getChildCount(); i++) {
             View child = getChildAt(i);
             if (child.getVisibility() == GONE) {
@@ -611,7 +559,6 @@ public class FclControllerView extends FrameLayout {
         private final Paint strokePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final TextPaint textPaint = new TextPaint(Paint.ANTI_ALIAS_FLAG);
         private final RectF rect = new RectF();
-        private boolean drawLogged = false;
 
         private boolean pressed = false;
         private boolean moved = false;
@@ -657,12 +604,6 @@ public class FclControllerView extends FrameLayout {
 
         @Override
         protected void onDraw(Canvas canvas) {
-            if (!drawLogged) {
-                drawLogged = true;
-                Log.d(TAG, "draw button '" + data.text + "' "
-                        + getWidth() + "x" + getHeight()
-                        + " fill=0x" + Integer.toHexString(data.style.fillColor));
-            }
             FclController.ButtonStyle s = data.style;
             float stroke = dp((pressed ? s.strokeWidthPressed : s.strokeWidth) / 10f);
             float corner = dp((pressed ? s.cornerRadiusPressed : s.cornerRadius) / 10f);
@@ -917,7 +858,6 @@ public class FclControllerView extends FrameLayout {
         private final RectF rect = new RectF();
 
         private int rockerSize;
-        private boolean drawLogged = false;
         private int maxDistance;
         private float rockerOffsetX;
         private float rockerOffsetY;
@@ -951,11 +891,6 @@ public class FclControllerView extends FrameLayout {
 
         @Override
         protected void onDraw(Canvas canvas) {
-            if (!drawLogged) {
-                drawLogged = true;
-                Log.d(TAG, "draw direction " + getWidth() + "x" + getHeight()
-                        + " style=" + data.style.styleType);
-            }
             if ("BUTTON".equals(data.style.styleType)) {
                 drawPad(canvas);
             } else {
