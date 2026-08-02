@@ -94,6 +94,11 @@ public class MainActivity extends Activity
     // shrinking it: the bar rides up with the keyboard but the surface keeps
     // its full size. See relayout() and buildExtraKeysBar().
     private static final String KEY_KEYBOARD_FLOATING = "keyboard_floating";
+    // FCL controller overlay (FoldCraftLauncher controller files from
+    // FCL-Controllers, rendered by FclControllerView).
+    private static final String KEY_FCL_ENABLED = "fcl_controller_enabled";
+    private static final String KEY_FCL_CONTROLLER = "fcl_controller_id";
+    private static final String DEFAULT_FCL_CONTROLLER = "00000000";
     private boolean mKeyboardFloating = false;
     // Persistent "tap to open Settings" notification, toggleable in Settings > General.
     private static final String KEY_NOTIFICATION_ENABLED = "settings_notification";
@@ -116,6 +121,9 @@ public class MainActivity extends Activity
 
     // ADDED: VirtualKeyboardView instance
     private VirtualKeyboardView virtualKeyboardView;
+    // FCL controller overlay (hidden until toggled / enabled in Settings).
+    private FclControllerView fclControllerView;
+    private String mFclControllerId = "";
 
     // ==================== 触摸板相关设置 ====================
     public static final String KEY_TOUCHPAD_MODE = "touchpad_mode";
@@ -488,6 +496,38 @@ public class MainActivity extends Activity
             FrameLayout.LayoutParams.WRAP_CONTENT,
             Gravity.NO_GRAVITY
         ));
+
+        // FCL controller overlay (FCL-Controllers layouts). Hidden by default;
+        // shown by the extra-keys "FCL" key or the Settings switch.
+        fclControllerView = new FclControllerView(this);
+        fclControllerView.setBridge(new FclControllerView.Bridge() {
+            @Override public void key(int action, int evdev) {
+                if (mNative != null) mNative.sendKey(action, evdev);
+            }
+            @Override public void mouseButton(int button, boolean pressed) {
+                if (mNative != null) mNative.sendMouseButton(button, pressed);
+            }
+            @Override public void mouseMove(float dx, float dy) {
+                if (mNative != null) mNative.sendMouseMotion(0f, 0f, dx, dy);
+            }
+            @Override public void mouseScroll(int axis, float value) {
+                if (mNative != null) mNative.sendMouseScroll(axis, value);
+            }
+            @Override public void text(String text) {
+                if (mNative != null && text != null && !text.isEmpty())
+                    mNative.sendTextInput(text.getBytes(StandardCharsets.UTF_8));
+            }
+            @Override public void toggleIme() { systemIme.toggleSystemKeyboard(); }
+            @Override public void toggleVirtualKeyboard() { toggleFloatingVirtualKeyboard(); }
+            @Override public void openSettings() {
+                startActivity(new Intent(MainActivity.this, SettingsActivity.class));
+            }
+        });
+        fclControllerView.setVisibility(View.GONE);
+        root.addView(fclControllerView, new FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT,
+            FrameLayout.LayoutParams.MATCH_PARENT));
+
         // Reposition the virtual keyboard when the root layout size changes
         // (e.g. freeform / small-window mode resize).
         root.addOnLayoutChangeListener((v, left, top, right, bottom,
@@ -502,6 +542,10 @@ public class MainActivity extends Activity
                 if (virtualKeyboardView != null
                         && virtualKeyboardView.getVisibility() == View.VISIBLE) {
                     positionVirtualKeyboard();
+                }
+                if (fclControllerView != null
+                        && fclControllerView.getVisibility() == View.VISIBLE) {
+                    fclControllerView.rebuild();
                 }
             }
         });
@@ -615,6 +659,82 @@ public class MainActivity extends Activity
         virtualKeyboardView.setY(y);
         Log.d("VirtualKeyboard", "positionVirtualKeyboard: x=" + x + ", y=" + y
                 + " parent=" + parentW + "x" + parentH + " view=" + w + "x" + h);
+    }
+
+    // Toggle the floating (custom-drawn) virtual keyboard. Shared by the
+    // extra-keys bar popup and the FCL controller "Input"/VK actions.
+    private void toggleFloatingVirtualKeyboard() {
+        if (virtualKeyboardView == null) return;
+        if (virtualKeyboardView.getVisibility() == View.VISIBLE) {
+            virtualKeyboardView.setVisibility(View.GONE);
+        } else {
+            Log.d("VirtualKeyboard", "toggle: showing keyboard, mRoot="
+                    + mRoot.getWidth() + "x" + mRoot.getHeight());
+            virtualKeyboardView.setVisibility(View.VISIBLE);
+            virtualKeyboardView.bringToFront();
+            // Re-position it (in case screen size changed)
+            positionVirtualKeyboard();
+            // Hide the system IME to avoid overlap with the floating keyboard.
+            InputMethodManager imm = getSystemService(InputMethodManager.class);
+            if (imm != null && getCurrentFocus() != null) {
+                imm.hideSoftInputFromWindow(getCurrentFocus().getWindowToken(), 0);
+            }
+        }
+    }
+
+    // ==================== FCL controller overlay ====================
+
+    /** Load a bundled FCL controller and install it on the overlay. */
+    private void loadFclController(String id) {
+        if (fclControllerView == null) return;
+        if (id.equals(mFclControllerId) && fclControllerView.hasController()) return;
+        FclController controller = FclController.loadFromAssets(this, id);
+        if (controller == null) {
+            Log.e(TAG, "loadFclController: failed to load controller " + id);
+            return;
+        }
+        fclControllerView.setController(controller);
+        mFclControllerId = id;
+    }
+
+    /** Show/hide the overlay according to the Settings switch. */
+    private void applyFclPrefs() {
+        if (fclControllerView == null) return;
+        SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+        boolean enabled = prefs.getBoolean(KEY_FCL_ENABLED, false);
+        if (!enabled) {
+            hideFclController();
+            return;
+        }
+        loadFclController(prefs.getString(KEY_FCL_CONTROLLER, DEFAULT_FCL_CONTROLLER));
+        if (fclControllerView.hasController()
+                && fclControllerView.getVisibility() != View.VISIBLE) {
+            fclControllerView.rebuild();
+            fclControllerView.setVisibility(View.VISIBLE);
+            fclControllerView.bringToFront();
+        }
+    }
+
+    /** Manual toggle (extra-keys bar "FCL" key); works regardless of the switch. */
+    private void toggleFclControllerOverlay() {
+        if (fclControllerView == null) return;
+        if (fclControllerView.getVisibility() == View.VISIBLE) {
+            hideFclController();
+            return;
+        }
+        SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+        loadFclController(prefs.getString(KEY_FCL_CONTROLLER, DEFAULT_FCL_CONTROLLER));
+        if (!fclControllerView.hasController()) return;
+        fclControllerView.rebuild();
+        fclControllerView.setVisibility(View.VISIBLE);
+        fclControllerView.bringToFront();
+    }
+
+    /** Hide the overlay and release every key it is holding. */
+    private void hideFclController() {
+        if (fclControllerView == null) return;
+        fclControllerView.releaseAll();
+        fclControllerView.setVisibility(View.GONE);
     }
 
     private int dpToPx(int dp) {
@@ -1405,6 +1525,9 @@ public class MainActivity extends Activity
         autoStretch = prefs.getBoolean(KEY_AUTO_STRETCH, true);
         relayout();
 
+        // FCL controller overlay: pick up the Settings switch/controller changes.
+        applyFclPrefs();
+
         // The socket pref may have been edited in Settings; keep our dedup key current.
         registerWindow();
     }
@@ -1415,6 +1538,8 @@ public class MainActivity extends Activity
         // Socket-missing bounce: no pipeline exists, so skip teardown (mNative is
         // null) and don't let the jump to Settings trigger any of it.
         if (mForceSettings) return;
+        // Release any held FCL controller keys before leaving the window.
+        hideFclController();
         clearPointerCaptureBackTracking();
         releasePointerCapture(false);
         NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
@@ -1427,6 +1552,7 @@ public class MainActivity extends Activity
 
     @Override
     protected void onDestroy() {
+        hideFclController();
         releasePointerCapture(false);
         if (mRegisteredSocket != null) {
             sWindowsBySocket.remove(mRegisteredSocket, this);
@@ -1693,23 +1819,9 @@ public class MainActivity extends Activity
             // Tapping the ⌨ key keeps the original behaviour: toggle the system IME.
             @Override public void toggleKeyboard() { systemIme.toggleSystemKeyboard(); }
             // Pulling up on the ⌨ key toggles the floating virtual keyboard.
-            @Override public void toggleVirtualKeyboard() {
-                if (virtualKeyboardView.getVisibility() == View.VISIBLE) {
-                    virtualKeyboardView.setVisibility(View.GONE);
-                } else {
-                    Log.d("VirtualKeyboard", "toggle: showing keyboard, mRoot="
-                            + mRoot.getWidth() + "x" + mRoot.getHeight());
-                    virtualKeyboardView.setVisibility(View.VISIBLE);
-                    virtualKeyboardView.bringToFront();
-                    // Re-position it (in case screen size changed)
-                    positionVirtualKeyboard();
-                    // Hide the system IME to avoid overlap with the floating keyboard.
-                    InputMethodManager imm = getSystemService(InputMethodManager.class);
-                    if (imm != null && getCurrentFocus() != null) {
-                        imm.hideSoftInputFromWindow(getCurrentFocus().getWindowToken(), 0);
-                    }
-                }
-            }
+            @Override public void toggleVirtualKeyboard() { toggleFloatingVirtualKeyboard(); }
+            // The FCL key toggles the FoldCraftLauncher controller overlay.
+            @Override public void toggleFclController() { toggleFclControllerOverlay(); }
             @Override public void openSettings() {
                 startActivity(new Intent(MainActivity.this, SettingsActivity.class));
             }

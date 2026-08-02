@@ -58,6 +58,10 @@ public class SettingsActivity extends Activity {
     private static final String KEY_BACK_OPENS_EXTRA_KEYS = "back_opens_extra_keys";
     private static final String KEY_EXTRA_KEYS_LAYOUT = "extra_keys_layout";
     private static final String KEY_KEYBOARD_FLOATING = "keyboard_floating";
+    // FCL controller overlay (FCL-Controllers JSON files bundled in assets).
+    private static final String KEY_FCL_ENABLED = "fcl_controller_enabled";
+    private static final String KEY_FCL_CONTROLLER = "fcl_controller_id";
+    private static final String[] FCL_CONTROLLER_IDS = {"00000000", "899a1e2b"};
     private static final String KEY_NOTIFICATION_ENABLED = "settings_notification";
     private static final String KEY_ORIENTATION = "screen_orientation";
     private static final String[] ORIENTATION_VALUES = {"default", "landscape", "portrait"};
@@ -262,6 +266,7 @@ public class SettingsActivity extends Activity {
         currentPage = Page.KEYBOARD;
         LinearLayout root = newPage(R.string.cat_keyboard_title);
         buildVirtualKeyboardSection(root);
+        buildFclSection(root);
         buildAccessibilitySection(root);
         buildExtraKeysSection(root);
         buildCustomLayoutSection(root);
@@ -332,6 +337,64 @@ public class SettingsActivity extends Activity {
         bindButton.setText(R.string.bind_key_button);
         bindButton.setOnClickListener(v -> startListening());
         root.addView(bindButton);
+    }
+
+    // ============================================================
+    // FCL controller overlay (FoldCraftLauncher keyboard controls)
+    // ============================================================
+    private void buildFclSection(LinearLayout root) {
+        SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+
+        TextView header = new TextView(this);
+        header.setText(R.string.section_fcl_controller);
+        header.setTextSize(16);
+        header.setTypeface(null, Typeface.BOLD);
+        header.setPadding(0, dp(24), 0, dp(8));
+        root.addView(header);
+
+        Switch fclSwitch = new Switch(this);
+        fclSwitch.setText(R.string.fcl_controller_switch);
+        fclSwitch.setTextSize(14);
+        fclSwitch.setPadding(0, dp(8), 0, 0);
+        fclSwitch.setChecked(prefs.getBoolean(KEY_FCL_ENABLED, false));
+        fclSwitch.setOnCheckedChangeListener((v, checked) ->
+            getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
+                .putBoolean(KEY_FCL_ENABLED, checked).apply());
+        root.addView(fclSwitch);
+
+        TextView label = new TextView(this);
+        label.setText(R.string.fcl_controller_label);
+        label.setTextSize(14);
+        label.setPadding(0, dp(16), 0, dp(4));
+        root.addView(label);
+
+        Spinner spinner = new Spinner(this);
+        spinner.setAdapter(new ArrayAdapter<>(this,
+            android.R.layout.simple_spinner_dropdown_item,
+            getResources().getStringArray(R.array.fcl_controller_options)));
+        String current = prefs.getString(KEY_FCL_CONTROLLER, FCL_CONTROLLER_IDS[0]);
+        int idx = 0;
+        for (int i = 0; i < FCL_CONTROLLER_IDS.length; i++) {
+            if (FCL_CONTROLLER_IDS[i].equals(current)) { idx = i; break; }
+        }
+        spinner.setSelection(idx);
+        spinner.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+            @Override
+            public void onItemSelected(AdapterView<?> parent, View v, int pos, long id) {
+                getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
+                    .putString(KEY_FCL_CONTROLLER, FCL_CONTROLLER_IDS[pos]).apply();
+            }
+            @Override
+            public void onNothingSelected(AdapterView<?> parent) {}
+        });
+        root.addView(spinner);
+
+        TextView hint = new TextView(this);
+        hint.setText(R.string.fcl_controller_hint);
+        hint.setTextSize(12);
+        hint.setTextColor(Color.GRAY);
+        hint.setPadding(0, dp(4), 0, dp(8));
+        root.addView(hint);
     }
 
     private void buildAccessibilitySection(LinearLayout root) {

@@ -11,6 +11,7 @@
     <string name="section_connection">Connection</string>
     <string name="section_resolution">Display Resolution</string>
     <string name="section_notification">Settings Notification</string>
+    <string name="section_fcl_controller">FCL Controller</string>
 
     <!-- Settings home: category rows and back navigation -->
     <string name="nav_back">‹ Back</string>
@@ -51,6 +52,13 @@
         <item>Never show</item>
         <item>Show with soft keyboard</item>
     </string-array>
+    <string-array name="fcl_controller_options">
+        <item>FCL Default</item>
+        <item>真•全键盘 (True Full Keyboard)</item>
+    </string-array>
+    <string name="fcl_controller_switch">Enable FCL controller overlay</string>
+    <string name="fcl_controller_label">Controller</string>
+    <string name="fcl_controller_hint">Shows FoldCraftLauncher controller layouts (from the FCL-Controllers project) as an overlay; buttons and the joystick are converted into desktop key/mouse input. The FCL key in the extra keys bar toggles it at any time.</string>
     <string name="back_opens_switch">Back key quickly toggles extra keys bar</string>
     <string name="back_opens_hint">When ON, pressing Back while the extra keys bar is hidden shows it; pressing Back again hides it.</string>
     <string name="keyboard_floating_switch">Keyboard floating (overlay display)</string>
