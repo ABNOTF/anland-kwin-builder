@@ -91,7 +91,7 @@ public class FclControllerView extends FrameLayout {
     private int lastLoggedLayoutW = -1;
     private int lastLoggedLayoutH = -1;
     private int touchLogCount = 0;
-    private boolean overlayDrawLogged = false;
+    private int overlayDrawCount = 0;
 
     // Position overrides: control id -> [x thousandths, y thousandths].
     // Saved overrides survive rebuilds; pending ones only exist while editing.
@@ -286,19 +286,17 @@ public class FclControllerView extends FrameLayout {
     @Override
     protected void onDraw(Canvas canvas) {
         super.onDraw(canvas);
-        if (!overlayDrawLogged) {
-            overlayDrawLogged = true;
-            Log.d(TAG, "overlay onDraw: " + getWidth() + "x" + getHeight()
-                    + " children=" + getChildCount());
+        if (overlayDrawCount < 10) {
+            overlayDrawCount++;
+            Log.d(TAG, "overlay onDraw #" + overlayDrawCount + ": "
+                    + getWidth() + "x" + getHeight() + " children=" + getChildCount());
         }
-        // Layer self-test: this translucent red wash proves the overlay layer is
-        // actually composited above the desktop surface. If it is invisible, the
-        // whole app window layer is being covered by the SurfaceView.
-        debugPaint.setColor(0x22FF0000);
-        canvas.drawRect(0, 0, getWidth(), getHeight(), debugPaint);
-        debugPaint.setColor(Color.RED);
-        debugPaint.setTextSize(dp(16));
-        canvas.drawText("FCL OVERLAY", dp(10), dp(28), debugPaint);
+        // Layer self-test: an OPAQUE red background is impossible to miss. If this
+        // is invisible on the device, the SurfaceView is covering the app window.
+        canvas.drawColor(0xFFFF0000);
+        debugPaint.setColor(Color.WHITE);
+        debugPaint.setTextSize(dp(24));
+        canvas.drawText("FCL LAYER TEST", dp(12), dp(44), debugPaint);
     }
 
     private boolean hitPassThrough(MotionEvent ev) {

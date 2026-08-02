@@ -741,7 +741,9 @@ public class MainActivity extends Activity
         if (show) {
             fclControllerView.rebuild();
             fclControllerView.setVisibility(View.VISIBLE);
-            fclControllerView.bringToFront();
+            // NOTE: no bringToFront() here. With a SurfaceView in the window,
+            // bringToFront() on a sibling is known to push the surface above the
+            // whole app window, hiding every overlay while touches still work.
         }
     }
 
@@ -759,7 +761,6 @@ public class MainActivity extends Activity
         mFclHiddenByBack = false;
         fclControllerView.rebuild();
         fclControllerView.setVisibility(View.VISIBLE);
-        fclControllerView.bringToFront();
     }
 
     /** Hide the overlay and release every key it is holding. */
