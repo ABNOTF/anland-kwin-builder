@@ -136,6 +136,7 @@ public class MainActivity extends Activity
     private boolean mFclHiddenByBack = false;
     private WindowManager fclWindowManager;
     private boolean fclWindowAdded = false;
+    private int fclWindowRetries = 0;
 
     // ==================== 触摸板相关设置 ====================
     public static final String KEY_TOUCHPAD_MODE = "touchpad_mode";
@@ -255,6 +256,14 @@ public class MainActivity extends Activity
     @Override
     public void onWindowFocusChanged(boolean hasFocus) {
         super.onWindowFocusChanged(hasFocus);
+        // Once the activity window is attached (focus gained), create the FCL
+        // overlay window if it is supposed to be visible.
+        if (hasFocus && fclControllerView != null
+                && isFclBottomMode()
+                && getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+                        .getBoolean(KEY_FCL_ENABLED, false)) {
+            showFclOverlayWindow();
+        }
         if (!isSocketFile(resolveSocketPath())) {
             //exit
             android.widget.Toast.makeText(this, "Deamon Down",
@@ -779,6 +788,19 @@ public class MainActivity extends Activity
     private void showFclOverlayWindow() {
         if (fclControllerView == null || fclWindowManager == null) return;
         if (!fclWindowAdded) {
+            View decor = getWindow().getDecorView();
+            android.os.IBinder token = decor != null ? decor.getWindowToken() : null;
+            if (token == null) {
+                // onResume() runs before the activity window is attached, so the
+                // app token is not valid yet. Retry after the window is attached.
+                if (fclWindowRetries++ < 100 && decor != null) {
+                    decor.post(this::showFclOverlayWindow);
+                } else {
+                    fclWindowRetries = 0;
+                }
+                return;
+            }
+            fclWindowRetries = 0;
             WindowManager.LayoutParams lp = new WindowManager.LayoutParams(
                     WindowManager.LayoutParams.MATCH_PARENT,
                     WindowManager.LayoutParams.MATCH_PARENT,
@@ -787,7 +809,7 @@ public class MainActivity extends Activity
                             | WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
                             | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
                     PixelFormat.TRANSLUCENT);
-            lp.token = getWindow().getAttributes().token;
+            lp.token = token;
             lp.gravity = Gravity.TOP | Gravity.START;
             try {
                 fclWindowManager.addView(fclControllerView, lp);
