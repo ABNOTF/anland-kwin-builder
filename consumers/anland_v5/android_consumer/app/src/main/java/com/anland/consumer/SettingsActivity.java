@@ -69,7 +69,6 @@ public class SettingsActivity extends Activity {
     private static final String KEY_EXTRA_KEYS_LAYOUT = "extra_keys_layout";
     private static final String KEY_KEYBOARD_FLOATING = "keyboard_floating";
     // FCL controller overlay (FCL-Controllers JSON files bundled in assets).
-    private static final String KEY_FCL_ENABLED = "fcl_controller_enabled";
     private static final String KEY_FCL_CONTROLLER = "fcl_controller_id";
     private static final String[] BUNDLED_CONTROLLER_IDS = {"00000000", "899a1e2b"};
     // Bottom overlay mode: original extra-keys bar vs FCL controller (二选一).
@@ -77,7 +76,6 @@ public class SettingsActivity extends Activity {
     private static final String[] BOTTOM_MODES = {"extra_keys", "fcl"};
     // FCL overlay lock / Back-toggle / one-shot editor request.
     private static final String KEY_FCL_ALWAYS = "fcl_always_foreground";
-    private static final String KEY_FCL_BACK_TOGGLE = "fcl_back_toggle";
     private static final String KEY_NOTIFICATION_ENABLED = "settings_notification";
     private static final String KEY_ORIENTATION = "screen_orientation";
     private static final String[] ORIENTATION_VALUES = {"default", "landscape", "portrait"};
@@ -405,28 +403,11 @@ public class SettingsActivity extends Activity {
         modeHint.setPadding(0, dp(4), 0, dp(8));
         root.addView(modeHint);
 
-        Switch fclSwitch = new Switch(this);
-        fclSwitch.setText(R.string.fcl_controller_switch);
-        fclSwitch.setTextSize(14);
-        fclSwitch.setPadding(0, dp(8), 0, 0);
-        fclSwitch.setChecked(prefs.getBoolean(KEY_FCL_ENABLED, false));
-        fclSwitch.setOnCheckedChangeListener((v, checked) -> {
-            SharedPreferences.Editor e = getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit();
-            e.putBoolean(KEY_FCL_ENABLED, checked);
-            if (checked) {
-                // Enabling FCL automatically selects the FCL bottom overlay,
-                // otherwise the overlay stays hidden by the exclusive-mode rule.
-                e.putString(KEY_BOTTOM_MODE, "fcl");
-            }
-            e.apply();
-        });
-        root.addView(fclSwitch);
-
-        // === Always lock the overlay in the foreground ===
+        // === Always lock the overlay in the foreground / Back toggles when off ===
         Switch alwaysSwitch = new Switch(this);
         alwaysSwitch.setText(R.string.fcl_always_switch);
         alwaysSwitch.setTextSize(14);
-        alwaysSwitch.setPadding(0, dp(16), 0, 0);
+        alwaysSwitch.setPadding(0, dp(8), 0, 0);
         alwaysSwitch.setChecked(prefs.getBoolean(KEY_FCL_ALWAYS, false));
         alwaysSwitch.setOnCheckedChangeListener((v, checked) ->
             getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
@@ -439,24 +420,6 @@ public class SettingsActivity extends Activity {
         alwaysHint.setTextColor(Color.GRAY);
         alwaysHint.setPadding(0, dp(4), 0, dp(8));
         root.addView(alwaysHint);
-
-        // === Back key toggles the FCL overlay when not locked ===
-        Switch backToggleSwitch = new Switch(this);
-        backToggleSwitch.setText(R.string.fcl_back_toggle_switch);
-        backToggleSwitch.setTextSize(14);
-        backToggleSwitch.setPadding(0, dp(16), 0, 0);
-        backToggleSwitch.setChecked(prefs.getBoolean(KEY_FCL_BACK_TOGGLE, true));
-        backToggleSwitch.setOnCheckedChangeListener((v, checked) ->
-            getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
-                .putBoolean(KEY_FCL_BACK_TOGGLE, checked).apply());
-        root.addView(backToggleSwitch);
-
-        TextView backToggleHint = new TextView(this);
-        backToggleHint.setText(R.string.fcl_back_toggle_hint);
-        backToggleHint.setTextSize(12);
-        backToggleHint.setTextColor(Color.GRAY);
-        backToggleHint.setPadding(0, dp(4), 0, dp(8));
-        root.addView(backToggleHint);
 
         TextView label = new TextView(this);
         label.setText(R.string.fcl_controller_label);

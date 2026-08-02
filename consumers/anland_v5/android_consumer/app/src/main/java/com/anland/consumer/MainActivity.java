@@ -97,7 +97,6 @@ public class MainActivity extends Activity
     private static final String KEY_KEYBOARD_FLOATING = "keyboard_floating";
     // FCL controller overlay (FoldCraftLauncher controller files from
     // FCL-Controllers, rendered by FclControllerView).
-    private static final String KEY_FCL_ENABLED = "fcl_controller_enabled";
     private static final String KEY_FCL_CONTROLLER = "fcl_controller_id";
     private static final String DEFAULT_FCL_CONTROLLER = "00000000";
     // Which bottom overlay is active: the original extra-keys bar or the FCL
@@ -108,7 +107,6 @@ public class MainActivity extends Activity
     // FCL overlay behaviour: always lock it in the foreground, and let Back
     // toggle it when unlocked (same pattern as the extra-keys bar).
     private static final String KEY_FCL_ALWAYS = "fcl_always_foreground";
-    private static final String KEY_FCL_BACK_TOGGLE = "fcl_back_toggle";
     private boolean mKeyboardFloating = false;
     // Persistent "tap to open Settings" notification, toggleable in Settings > General.
     private static final String KEY_NOTIFICATION_ENABLED = "settings_notification";
@@ -258,10 +256,7 @@ public class MainActivity extends Activity
         super.onWindowFocusChanged(hasFocus);
         // Once the activity window is attached (focus gained), create the FCL
         // overlay window if it is supposed to be visible.
-        if (hasFocus && fclControllerView != null
-                && isFclBottomMode()
-                && getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
-                        .getBoolean(KEY_FCL_ENABLED, false)) {
+        if (hasFocus && fclControllerView != null && isFclBottomMode()) {
             showFclOverlayWindow();
         }
         if (!isSocketFile(resolveSocketPath())) {
@@ -286,6 +281,18 @@ public class MainActivity extends Activity
                 clearPointerCaptureBackTracking();
                 releasePointerCapture(false);
             }
+        }
+    }
+
+    @Override
+    public void onConfigurationChanged(android.content.res.Configuration newConfig) {
+        super.onConfigurationChanged(newConfig);
+        // The FCL overlay lives in its own window; recreate it on rotation so the
+        // controls are re-laid out for the new display size (a plain rebuild does
+        // not resize the separate window).
+        if (fclWindowAdded && fclControllerView != null) {
+            removeFclOverlayWindow();
+            showFclOverlayWindow();
         }
     }
 
@@ -735,18 +742,7 @@ public class MainActivity extends Activity
         SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
 
         // FCL and the original extra-keys bar are mutually exclusive.
-        boolean fclMode = isFclBottomMode();
-        boolean enabled = prefs.getBoolean(KEY_FCL_ENABLED, false);
-        boolean alwaysLocked = prefs.getBoolean(KEY_FCL_ALWAYS, false);
-        Log.d(TAG, "applyFclPrefs mode=" + (fclMode ? "fcl" : "extra_keys")
-                + " enabled=" + enabled + " always=" + alwaysLocked
-                + " hiddenByBack=" + mFclHiddenByBack);
-        if (!fclMode) {
-            hideFclController();
-            return;
-        }
-
-        if (!enabled) {
+        if (!isFclBottomMode()) {
             hideFclController();
             return;
         }
@@ -755,9 +751,6 @@ public class MainActivity extends Activity
             return;
         }
 
-        // On resume, an enabled FCL overlay is always shown; a manual Back-hide
-        // only applies until the next resume so the overlay can never get stuck
-        // in a hidden state.
         showFclOverlayWindow();
     }
 
@@ -1992,6 +1985,14 @@ public class MainActivity extends Activity
     // callback may not fire, so sync the extra-keys bar explicitly here in all modes.
     @Override
     public void onImeVisibilityChanged(boolean visible) {
+        // While the system IME is open, remove the FCL overlay window: the
+        // floating window interferes with IME input and causes a black flash.
+        // It is restored when the IME closes.
+        if (visible) {
+            hideFclController();
+        } else if (isFclBottomMode()) {
+            showFclOverlayWindow();
+        }
         String mode = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
                 .getString(KEY_EXTRA_KEYS_MODE, "always");
         if ("with_keyboard".equals(mode))
@@ -2107,8 +2108,7 @@ public class MainActivity extends Activity
 
         // FCL bottom mode: Back toggles the overlay unless it is locked to the
         // foreground, in which case Back is swallowed so the overlay stays up.
-        if (keyCode == KeyEvent.KEYCODE_BACK && isFclBottomMode()
-                && prefs.getBoolean(KEY_FCL_ENABLED, false)) {
+        if (keyCode == KeyEvent.KEYCODE_BACK && isFclBottomMode()) {
             if (prefs.getBoolean(KEY_FCL_ALWAYS, false)) {
                 if (fclControllerView == null
                         || fclControllerView.getVisibility() != View.VISIBLE) {
@@ -2116,10 +2116,8 @@ public class MainActivity extends Activity
                 }
                 return true;
             }
-            if (prefs.getBoolean(KEY_FCL_BACK_TOGGLE, true)) {
-                toggleFclControllerOverlay();
-                return true;
-            }
+            toggleFclControllerOverlay();
+            return true;
         }
 
         // Back key toggles the extra-keys bar (without opening the soft keyboard)
@@ -2142,9 +2140,9 @@ public class MainActivity extends Activity
     public void onBackPressed() {
         // Same FCL handling for OEMs that dispatch Back via onBackPressed().
         SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
-        if (isFclBottomMode() && prefs.getBoolean(KEY_FCL_ENABLED, false)) {
+        if (isFclBottomMode()) {
             boolean locked = prefs.getBoolean(KEY_FCL_ALWAYS, false);
-            if (!locked && prefs.getBoolean(KEY_FCL_BACK_TOGGLE, true)) {
+            if (!locked) {
                 toggleFclControllerOverlay();
             } else if (locked && (fclControllerView == null
                     || fclControllerView.getVisibility() != View.VISIBLE)) {

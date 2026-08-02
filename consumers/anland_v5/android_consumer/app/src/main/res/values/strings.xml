@@ -52,19 +52,16 @@
         <item>Never show</item>
         <item>Show with soft keyboard</item>
     </string-array>
-    <string name="fcl_controller_switch">Enable FCL controller overlay</string>
     <string name="fcl_controller_label">Controller</string>
     <string name="fcl_controller_hint">Shows FoldCraftLauncher controller layouts (from the FCL-Controllers project) as an overlay; buttons and the joystick are converted into desktop key/mouse input. The FCL key in the extra keys bar toggles it at any time.</string>
-    <string name="bottom_overlay_label">Bottom overlay</string>
+    <string name="bottom_overlay_label">Overlay controls</string>
     <string-array name="bottom_overlay_options">
         <item>Original extra-keys bar</item>
         <item>FCL controller</item>
     </string-array>
-    <string name="bottom_overlay_hint">The original extra-keys bar and the FCL controller are mutually exclusive. When FCL controller is selected, the bottom bar is hidden.</string>
+    <string name="bottom_overlay_hint">Choose the overlay controls: the original extra-keys bar or the FCL controller. When FCL is selected, the bottom bar is hidden.</string>
     <string name="fcl_always_switch">Always lock overlay in foreground</string>
     <string name="fcl_always_hint">When ON the FCL overlay stays visible and Back cannot hide it. When OFF, Back shows/hides it.</string>
-    <string name="fcl_back_toggle_switch">Back key quickly toggles FCL controller</string>
-    <string name="fcl_back_toggle_hint">When ON and the overlay is not locked, pressing Back shows the FCL overlay; pressing Back again hides it.</string>
     <string name="fcl_import">Import</string>
     <string name="fcl_export">Export</string>
     <string name="fcl_import_done">Controller imported</string>

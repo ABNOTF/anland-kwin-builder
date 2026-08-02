@@ -2,7 +2,6 @@ package com.anland.consumer;
 
 import android.content.Context;
 import android.graphics.Canvas;
-import android.graphics.Color;
 import android.graphics.Paint;
 import android.graphics.RectF;
 import android.content.SharedPreferences;
@@ -599,7 +598,6 @@ public class FclControllerView extends FrameLayout {
             setWillNotDraw(false);
             strokePaint.setStyle(Paint.Style.STROKE);
             textPaint.setTextAlign(Paint.Align.CENTER);
-            textPaint.setShadowLayer(2, 0, 1, Color.BLACK);
         }
 
         @Override
@@ -609,10 +607,8 @@ public class FclControllerView extends FrameLayout {
             float corner = dp((pressed ? s.cornerRadiusPressed : s.cornerRadius) / 10f);
 
             rect.set(stroke, stroke, getWidth() - stroke, getHeight() - stroke);
-            fillPaint.setColor(visibleFill(pressed ? s.fillColorPressed : s.fillColor,
-                    pressed ? 0xFF777777 : 0xCC555555));
-            int strokeColor = pressed ? s.strokeColorPressed : s.strokeColor;
-            strokePaint.setColor(isDark(strokeColor) ? 0xFFCCCCCC : strokeColor);
+            fillPaint.setColor(pressed ? s.fillColorPressed : s.fillColor);
+            strokePaint.setColor(pressed ? s.strokeColorPressed : s.strokeColor);
             strokePaint.setStrokeWidth(stroke);
             canvas.drawRoundRect(rect, corner, corner, fillPaint);
             canvas.drawRoundRect(rect, corner, corner, strokePaint);
@@ -629,8 +625,7 @@ public class FclControllerView extends FrameLayout {
             if (text == null || text.isEmpty()) {
                 return;
             }
-            int textColor = pressed ? s.textColorPressed : s.textColor;
-            textPaint.setColor(isDark(textColor) ? Color.WHITE : textColor);
+            textPaint.setColor(pressed ? s.textColorPressed : s.textColor);
             textPaint.setTextSize((pressed ? s.textSizePressed : s.textSize) * density);
             textPaint.setTextAlign(Paint.Align.CENTER);
             String[] lines = text.split("\n", -1);
@@ -915,8 +910,8 @@ public class FclControllerView extends FrameLayout {
             float bgStroke = dp(rs.bgStrokeWidth / 10f);
             float bgCorner = w * rs.bgCornerRadius / 1000f;
             rect.set(bgStroke, bgStroke, w - bgStroke, h - bgStroke);
-            fillPaint.setColor(visibleFill(rs.bgFillColor, 0xCC555555));
-            strokePaint.setColor(isDark(rs.bgStrokeColor) ? 0xFFCCCCCC : rs.bgStrokeColor);
+            fillPaint.setColor(rs.bgFillColor);
+            strokePaint.setColor(rs.bgStrokeColor);
             strokePaint.setStrokeWidth(bgStroke);
             canvas.drawRoundRect(rect, bgCorner, bgCorner, fillPaint);
             canvas.drawRoundRect(rect, bgCorner, bgCorner, strokePaint);
@@ -931,8 +926,8 @@ public class FclControllerView extends FrameLayout {
             float rCorner = rockerSize * rs.rockerCornerRadius / 1000f;
             rect.set(cx - rockerSize / 2f, cy - rockerSize / 2f,
                     cx + rockerSize / 2f, cy + rockerSize / 2f);
-            fillPaint.setColor(visibleFill(rs.rockerFillColor, 0xFF8A8A8A));
-            strokePaint.setColor(isDark(rs.rockerStrokeColor) ? 0xFFCCCCCC : rs.rockerStrokeColor);
+            fillPaint.setColor(rs.rockerFillColor);
+            strokePaint.setColor(rs.rockerStrokeColor);
             strokePaint.setStrokeWidth(rStroke);
             canvas.drawRoundRect(rect, rCorner, rCorner, fillPaint);
             canvas.drawRoundRect(rect, rCorner, rCorner, strokePaint);
@@ -960,15 +955,12 @@ public class FclControllerView extends FrameLayout {
             float stroke = dp((active ? bs.strokeWidthPressed : bs.strokeWidth) / 10f);
             float corner = dp((active ? bs.cornerRadiusPressed : bs.cornerRadius) / 10f);
             rect.set(x + stroke, y + stroke, x + size - stroke, y + size - stroke);
-            fillPaint.setColor(visibleFill(active ? bs.fillColorPressed : bs.fillColor,
-                    active ? 0xFF777777 : 0xCC555555));
-            int strokeColor = active ? bs.strokeColorPressed : bs.strokeColor;
-            strokePaint.setColor(isDark(strokeColor) ? 0xFFCCCCCC : strokeColor);
+            fillPaint.setColor(active ? bs.fillColorPressed : bs.fillColor);
+            strokePaint.setColor(active ? bs.strokeColorPressed : bs.strokeColor);
             strokePaint.setStrokeWidth(stroke);
             canvas.drawRoundRect(rect, corner, corner, fillPaint);
             canvas.drawRoundRect(rect, corner, corner, strokePaint);
-            int textColor = active ? bs.textColorPressed : bs.textColor;
-            textPaint.setColor(isDark(textColor) ? Color.WHITE : textColor);
+            textPaint.setColor(active ? bs.textColorPressed : bs.textColor);
             textPaint.setTextSize((active ? bs.textSizePressed : bs.textSize) * density);
             canvas.drawText(text, x + size / 2f, y + size / 2f
                     - (textPaint.descent() + textPaint.ascent()) / 2f, textPaint);
@@ -1216,16 +1208,4 @@ public class FclControllerView extends FrameLayout {
         return Math.max(min, Math.min(max, v));
     }
 
-    /** FCL controllers often use fully transparent fills; keep them tappable but visible. */
-    private static int visibleFill(int color, int fallback) {
-        return ((color >>> 24) == 0) ? fallback : color;
-    }
-
-    /** Force light text/strokes when the controller style is dark-on-dark. */
-    private static boolean isDark(int color) {
-        int r = (color >> 16) & 0xFF;
-        int g = (color >> 8) & 0xFF;
-        int b = color & 0xFF;
-        return (r + g + b) / 3 < 128;
-    }
 }
