@@ -62,6 +62,15 @@ public class FclControllerView extends FrameLayout {
         void openSettings();
     }
 
+    /**
+     * Receives touches that land outside the controller controls. The overlay
+     * routes every pointer itself while visible so that holding a button and
+     * swiping the desktop surface work at the same time (multi-touch).
+     */
+    public interface SurfaceTouchForwarder {
+        boolean onSurfaceTouch(MotionEvent event);
+    }
+
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final float density;
     private final List<View> controls = new ArrayList<>();
@@ -71,6 +80,10 @@ public class FclControllerView extends FrameLayout {
     private Bridge bridge;
     private float mouseSensitivity = 1f;
     private boolean editMode = false;
+    private SurfaceTouchForwarder surfaceForwarder;
+    private final List<View> passThroughViews = new ArrayList<>();
+    private final Map<View, Integer> controlPointers = new HashMap<>();
+    private boolean surfaceDown = false;
 
     // Position overrides: control id -> [x thousandths, y thousandths].
     // Saved overrides survive rebuilds; pending ones only exist while editing.
@@ -87,6 +100,18 @@ public class FclControllerView extends FrameLayout {
 
     public void setBridge(Bridge bridge) {
         this.bridge = bridge;
+    }
+
+    public void setSurfaceTouchForwarder(SurfaceTouchForwarder forwarder) {
+        this.surfaceForwarder = forwarder;
+    }
+
+    /** Other overlays (IME, extra-keys bar...) that keep normal touch dispatch. */
+    public void setPassThroughViews(List<View> views) {
+        passThroughViews.clear();
+        if (views != null) {
+            passThroughViews.addAll(views);
+        }
     }
 
     public void setController(FclController controller) {
@@ -212,6 +237,165 @@ public class FclControllerView extends FrameLayout {
         if (visibility == VISIBLE && controller != null) {
             rebuild();
         }
+    }
+
+    /**
+     * Multi-touch routing. While the overlay is visible every pointer is handled
+     * here: pointers inside a control go to that control (so several buttons can
+     * be pressed at once), pointers outside go to the surface forwarder. Without
+     * this, Android gives the whole gesture to whichever view got the first
+     * touch, making it impossible to hold a key and swipe the screen together.
+     */
+    @Override
+    public boolean dispatchTouchEvent(MotionEvent ev) {
+        if (controller == null || getVisibility() != VISIBLE || editMode
+                || surfaceForwarder == null || hitPassThrough(ev)) {
+            return super.dispatchTouchEvent(ev);
+        }
+        routeTouchEvent(ev);
+        return true;
+    }
+
+    private boolean hitPassThrough(MotionEvent ev) {
+        if (passThroughViews.isEmpty()) {
+            return false;
+        }
+        for (int i = 0; i < ev.getPointerCount(); i++) {
+            float x = ev.getX(i);
+            float y = ev.getY(i);
+            for (View v : passThroughViews) {
+                if (v != null && v.getVisibility() == VISIBLE
+                        && x >= v.getX() && x <= v.getX() + v.getWidth()
+                        && y >= v.getY() && y <= v.getY() + v.getHeight()) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private void routeTouchEvent(MotionEvent ev) {
+        int masked = ev.getActionMasked();
+        int idx = ev.getActionIndex();
+        View control = controlAt(ev.getX(idx), ev.getY(idx));
+        switch (masked) {
+            case MotionEvent.ACTION_DOWN:
+            case MotionEvent.ACTION_POINTER_DOWN:
+                if (control != null) {
+                    controlPointers.put(control, ev.getPointerId(idx));
+                    dispatchControl(control, ev, MotionEvent.ACTION_DOWN, idx);
+                } else {
+                    surfacePointerDown(ev, idx);
+                }
+                break;
+
+            case MotionEvent.ACTION_MOVE:
+                List<Map.Entry<View, Integer>> entries =
+                        new ArrayList<>(controlPointers.entrySet());
+                for (Map.Entry<View, Integer> e : entries) {
+                    int pi = pointerIndex(ev, e.getValue());
+                    if (pi >= 0) {
+                        dispatchControl(e.getKey(), ev, MotionEvent.ACTION_MOVE, pi);
+                    }
+                }
+                if (surfaceDown) {
+                    int si = firstSurfacePointer(ev);
+                    if (si >= 0) {
+                        forwardSurface(ev, MotionEvent.ACTION_MOVE, si);
+                    }
+                }
+                break;
+
+            case MotionEvent.ACTION_POINTER_UP:
+            case MotionEvent.ACTION_UP:
+                int pid = ev.getPointerId(idx);
+                View mapped = controlByPointerId(pid);
+                if (mapped != null) {
+                    dispatchControl(mapped, ev, MotionEvent.ACTION_UP, idx);
+                    controlPointers.remove(mapped);
+                } else if (surfaceDown) {
+                    forwardSurface(ev, MotionEvent.ACTION_UP, idx);
+                    surfaceDown = false;
+                }
+                break;
+
+            case MotionEvent.ACTION_CANCEL:
+                for (Map.Entry<View, Integer> e : new ArrayList<>(controlPointers.entrySet())) {
+                    int pi = pointerIndex(ev, e.getValue());
+                    dispatchControl(e.getKey(), ev, MotionEvent.ACTION_CANCEL, Math.max(0, pi));
+                }
+                controlPointers.clear();
+                if (surfaceDown) {
+                    forwardSurface(ev, MotionEvent.ACTION_CANCEL, idx);
+                    surfaceDown = false;
+                }
+                break;
+        }
+    }
+
+    private void surfacePointerDown(MotionEvent ev, int idx) {
+        if (surfaceDown) {
+            return; // a second surface finger is not tracked while controls are active
+        }
+        surfaceDown = true;
+        forwardSurface(ev, MotionEvent.ACTION_DOWN, idx);
+    }
+
+    private void dispatchControl(View view, MotionEvent src, int action, int idx) {
+        float x = src.getX(idx) - view.getX();
+        float y = src.getY(idx) - view.getY();
+        MotionEvent e = MotionEvent.obtain(src.getDownTime(), src.getEventTime(),
+                action, x, y, src.getMetaState());
+        view.onTouchEvent(e);
+        e.recycle();
+    }
+
+    private void forwardSurface(MotionEvent src, int action, int idx) {
+        MotionEvent e = MotionEvent.obtain(src.getDownTime(), src.getEventTime(),
+                action, src.getX(idx), src.getY(idx), src.getMetaState());
+        surfaceForwarder.onSurfaceTouch(e);
+        e.recycle();
+    }
+
+    private int pointerIndex(MotionEvent ev, int pointerId) {
+        for (int i = 0; i < ev.getPointerCount(); i++) {
+            if (ev.getPointerId(i) == pointerId) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    private View controlByPointerId(int pointerId) {
+        for (Map.Entry<View, Integer> e : controlPointers.entrySet()) {
+            if (e.getValue() == pointerId) {
+                return e.getKey();
+            }
+        }
+        return null;
+    }
+
+    private int firstSurfacePointer(MotionEvent ev) {
+        for (int i = 0; i < ev.getPointerCount(); i++) {
+            if (controlAt(ev.getX(i), ev.getY(i)) == null) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    private View controlAt(float x, float y) {
+        for (int i = getChildCount() - 1; i >= 0; i--) {
+            View child = getChildAt(i);
+            if (child.getVisibility() != VISIBLE) {
+                continue;
+            }
+            if (x >= child.getX() && x <= child.getX() + child.getWidth()
+                    && y >= child.getY() && y <= child.getY() + child.getHeight()) {
+                return child;
+            }
+        }
+        return null;
     }
 
     /** Release every held key/button (call when hiding the overlay). */

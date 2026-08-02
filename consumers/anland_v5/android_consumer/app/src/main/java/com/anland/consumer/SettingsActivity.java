@@ -34,8 +34,18 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.LinkedHashSet;
+import java.util.List;
+
+import org.json.JSONObject;
 
 
 public class SettingsActivity extends Activity {
@@ -61,19 +71,20 @@ public class SettingsActivity extends Activity {
     // FCL controller overlay (FCL-Controllers JSON files bundled in assets).
     private static final String KEY_FCL_ENABLED = "fcl_controller_enabled";
     private static final String KEY_FCL_CONTROLLER = "fcl_controller_id";
-    private static final String[] FCL_CONTROLLER_IDS = {"00000000", "899a1e2b"};
+    private static final String[] BUNDLED_CONTROLLER_IDS = {"00000000", "899a1e2b"};
     // Bottom overlay mode: original extra-keys bar vs FCL controller (二选一).
     private static final String KEY_BOTTOM_MODE = "bottom_overlay_mode";
     private static final String[] BOTTOM_MODES = {"extra_keys", "fcl"};
     // FCL overlay lock / Back-toggle / one-shot editor request.
     private static final String KEY_FCL_ALWAYS = "fcl_always_foreground";
     private static final String KEY_FCL_BACK_TOGGLE = "fcl_back_toggle";
-    private static final String KEY_FCL_EDIT_REQUEST = "fcl_edit_request";
     private static final String KEY_NOTIFICATION_ENABLED = "settings_notification";
     private static final String KEY_ORIENTATION = "screen_orientation";
     private static final String[] ORIENTATION_VALUES = {"default", "landscape", "portrait"};
     private static final String DEFAULT_SOCKET_PATH = "/data/local/tmp/display_daemon.sock";
     private static final int UNBOUND = -1;
+    private static final int REQ_IMPORT_CONTROLLER = 3001;
+    private static final int REQ_EXPORT_CONTROLLER = 3002;
 
     // ===== 新增：触摸板 Key =====
     private static final String KEY_TOUCHPAD_MODE = "touchpad_mode";
@@ -446,50 +457,64 @@ public class SettingsActivity extends Activity {
         label.setPadding(0, dp(16), 0, dp(4));
         root.addView(label);
 
+        final List<String> controllerIds = availableControllerIds();
+        List<String> names = new ArrayList<>();
+        for (String cid : controllerIds) {
+            names.add(controllerDisplayName(cid));
+        }
         Spinner spinner = new Spinner(this);
         spinner.setAdapter(new ArrayAdapter<>(this,
-            android.R.layout.simple_spinner_dropdown_item,
-            getResources().getStringArray(R.array.fcl_controller_options)));
-        String current = prefs.getString(KEY_FCL_CONTROLLER, FCL_CONTROLLER_IDS[0]);
+            android.R.layout.simple_spinner_dropdown_item, names));
+        String current = prefs.getString(KEY_FCL_CONTROLLER, BUNDLED_CONTROLLER_IDS[0]);
         int idx = 0;
-        for (int i = 0; i < FCL_CONTROLLER_IDS.length; i++) {
-            if (FCL_CONTROLLER_IDS[i].equals(current)) { idx = i; break; }
+        for (int i = 0; i < controllerIds.size(); i++) {
+            if (controllerIds.get(i).equals(current)) { idx = i; break; }
         }
         spinner.setSelection(idx);
         spinner.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
             @Override
             public void onItemSelected(AdapterView<?> parent, View v, int pos, long id) {
                 getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
-                    .putString(KEY_FCL_CONTROLLER, FCL_CONTROLLER_IDS[pos]).apply();
+                    .putString(KEY_FCL_CONTROLLER, controllerIds.get(pos)).apply();
             }
             @Override
             public void onNothingSelected(AdapterView<?> parent) {}
         });
         root.addView(spinner);
 
-        // === Editor / reset actions ===
+        // === Import / export / reset actions ===
         LinearLayout fclButtons = new LinearLayout(this);
         fclButtons.setOrientation(LinearLayout.HORIZONTAL);
         fclButtons.setPadding(0, dp(8), 0, 0);
 
-        Button editLayoutBtn = new Button(this);
-        editLayoutBtn.setText(R.string.fcl_edit_button);
-        editLayoutBtn.setOnClickListener(v -> {
-            SharedPreferences e = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
-            e.edit()
-                .putBoolean(KEY_FCL_ENABLED, true)
-                .putString(KEY_BOTTOM_MODE, "fcl")
-                .putBoolean(KEY_FCL_EDIT_REQUEST, true)
-                .apply();
-            Toast.makeText(this, R.string.fcl_edit_requested, Toast.LENGTH_SHORT).show();
+        Button importBtn = new Button(this);
+        importBtn.setText(R.string.fcl_import);
+        importBtn.setOnClickListener(v -> {
+            Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+            intent.addCategory(Intent.CATEGORY_OPENABLE);
+            intent.setType("application/json");
+            startActivityForResult(intent, REQ_IMPORT_CONTROLLER);
         });
-        fclButtons.addView(editLayoutBtn);
+        fclButtons.addView(importBtn);
+
+        Button exportBtn = new Button(this);
+        exportBtn.setText(R.string.fcl_export);
+        exportBtn.setOnClickListener(v -> {
+            String cid = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+                .getString(KEY_FCL_CONTROLLER, BUNDLED_CONTROLLER_IDS[0]);
+            Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT);
+            intent.addCategory(Intent.CATEGORY_OPENABLE);
+            intent.setType("application/json");
+            intent.putExtra(Intent.EXTRA_TITLE, cid + ".json");
+            startActivityForResult(intent, REQ_EXPORT_CONTROLLER);
+        });
+        fclButtons.addView(exportBtn);
 
         Button resetLayoutBtn = new Button(this);
         resetLayoutBtn.setText(R.string.fcl_reset_layout);
         resetLayoutBtn.setOnClickListener(v -> {
             String ctrlId = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
-                .getString(KEY_FCL_CONTROLLER, FCL_CONTROLLER_IDS[0]);
+                .getString(KEY_FCL_CONTROLLER, BUNDLED_CONTROLLER_IDS[0]);
             getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
                 .remove("fcl_pos_" + ctrlId).apply();
             Toast.makeText(this, R.string.fcl_reset_done, Toast.LENGTH_SHORT).show();
@@ -504,6 +529,118 @@ public class SettingsActivity extends Activity {
         hint.setTextColor(Color.GRAY);
         hint.setPadding(0, dp(4), 0, dp(8));
         root.addView(hint);
+    }
+
+    // ============================================================
+    // FCL controller import / export
+    // ============================================================
+
+    private List<String> availableControllerIds() {
+        LinkedHashSet<String> ids =
+                new LinkedHashSet<>(Arrays.asList(BUNDLED_CONTROLLER_IDS));
+        File dir = new File(getFilesDir(), "fcl_controllers");
+        File[] files = dir.listFiles();
+        if (files != null) {
+            for (File f : files) {
+                String name = f.getName();
+                if (name.endsWith(".json")) {
+                    ids.add(name.substring(0, name.length() - 5));
+                }
+            }
+        }
+        return new ArrayList<>(ids);
+    }
+
+    private String controllerDisplayName(String id) {
+        try {
+            JSONObject obj = new JSONObject(
+                    new String(readControllerBytes(id), StandardCharsets.UTF_8));
+            String name = obj.optString("name", "");
+            return name.isEmpty() ? id : name + " (" + id + ")";
+        } catch (Exception e) {
+            return id;
+        }
+    }
+
+    private byte[] readControllerBytes(String id) throws IOException {
+        File f = new File(getFilesDir(), "fcl_controllers/" + id + ".json");
+        if (f.isFile()) {
+            return readAll(new FileInputStream(f));
+        }
+        return readAll(getAssets().open("fcl_controllers/" + id + ".json"));
+    }
+
+    private byte[] readAll(InputStream in) throws IOException {
+        try {
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            byte[] buf = new byte[8192];
+            int n;
+            while ((n = in.read(buf)) != -1) {
+                out.write(buf, 0, n);
+            }
+            return out.toByteArray();
+        } finally {
+            try {
+                in.close();
+            } catch (IOException ignored) {
+            }
+        }
+    }
+
+    private void importController(Uri uri) {
+        try {
+            InputStream in = getContentResolver().openInputStream(uri);
+            if (in == null) {
+                Toast.makeText(this, R.string.fcl_import_invalid, Toast.LENGTH_SHORT).show();
+                return;
+            }
+            byte[] bytes = readAll(in);
+            JSONObject obj = new JSONObject(new String(bytes, StandardCharsets.UTF_8));
+            String id = obj.optString("id", "");
+            if (id.isEmpty() || !id.matches("[A-Za-z0-9_-]+")) {
+                Toast.makeText(this, R.string.fcl_import_invalid, Toast.LENGTH_SHORT).show();
+                return;
+            }
+            File dir = new File(getFilesDir(), "fcl_controllers");
+            if (!dir.isDirectory() && !dir.mkdirs()) {
+                Toast.makeText(this, R.string.fcl_import_invalid, Toast.LENGTH_SHORT).show();
+                return;
+            }
+            File out = new File(dir, id + ".json");
+            FileOutputStream fos = new FileOutputStream(out);
+            try {
+                fos.write(bytes);
+            } finally {
+                fos.close();
+            }
+            getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
+                .putString(KEY_FCL_CONTROLLER, id).apply();
+            Toast.makeText(this, R.string.fcl_import_done, Toast.LENGTH_SHORT).show();
+            showKeyboardPage();   // refresh the controller list
+        } catch (Exception e) {
+            Log.e(TAG, "import controller failed", e);
+            Toast.makeText(this, R.string.fcl_import_invalid, Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    private void exportController(Uri uri) {
+        try {
+            String id = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+                .getString(KEY_FCL_CONTROLLER, BUNDLED_CONTROLLER_IDS[0]);
+            byte[] bytes = readControllerBytes(id);
+            java.io.OutputStream os = getContentResolver().openOutputStream(uri);
+            if (os != null) {
+                try {
+                    os.write(bytes);
+                } finally {
+                    os.close();
+                }
+            }
+            Toast.makeText(this, R.string.fcl_export_done, Toast.LENGTH_SHORT).show();
+        } catch (Exception e) {
+            Log.e(TAG, "export controller failed", e);
+            Toast.makeText(this, R.string.fcl_export_failed, Toast.LENGTH_SHORT).show();
+        }
     }
 
     private void buildAccessibilitySection(LinearLayout root) {
@@ -1282,6 +1419,17 @@ public class SettingsActivity extends Activity {
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == REQ_IMPORT_CONTROLLER || requestCode == REQ_EXPORT_CONTROLLER) {
+            if (resultCode == RESULT_OK && data != null && data.getData() != null) {
+                Uri uri = data.getData();
+                if (requestCode == REQ_IMPORT_CONTROLLER) {
+                    importController(uri);
+                } else {
+                    exportController(uri);
+                }
+            }
+            return;
+        }
         if (requestCode != REQ_PICK_LAYOUT || resultCode != RESULT_OK || data == null)
             return;
         Uri uri = data.getData();

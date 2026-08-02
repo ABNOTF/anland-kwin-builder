@@ -109,6 +109,39 @@ public final class FclController {
         }
     }
 
+    /**
+     * Load a controller by id: an imported copy in the app's files dir takes
+     * precedence over the bundled asset with the same id.
+     */
+    public static FclController load(Context context, String id) {
+        java.io.File imported = new java.io.File(context.getFilesDir(),
+                ASSET_DIR + "/" + id + ".json");
+        if (imported.isFile()) {
+            InputStream in = null;
+            try {
+                in = new java.io.FileInputStream(imported);
+                ByteArrayOutputStream out = new ByteArrayOutputStream();
+                byte[] buf = new byte[8192];
+                int n;
+                while ((n = in.read(buf)) != -1) {
+                    out.write(buf, 0, n);
+                }
+                return parse(new JSONObject(
+                        new String(out.toByteArray(), StandardCharsets.UTF_8)));
+            } catch (IOException | JSONException e) {
+                Log.e(TAG, "load imported controller " + id + " failed", e);
+            } finally {
+                if (in != null) {
+                    try {
+                        in.close();
+                    } catch (IOException ignored) {
+                    }
+                }
+            }
+        }
+        return loadFromAssets(context, id);
+    }
+
     // ---------------------------------------------------------------- styles
 
     /** Visual style of a control button (FCL "buttonStyles" entry). */
