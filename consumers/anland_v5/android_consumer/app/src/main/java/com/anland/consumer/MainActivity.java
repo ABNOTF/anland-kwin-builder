@@ -443,6 +443,10 @@ public class MainActivity extends Activity
         getWindow().setDecorFitsSystemWindows(false);
 
         surfaceView = new SurfaceView(this);
+        // Keep the desktop surface strictly behind the app window content so
+        // overlays (FCL controller etc.) are composited above it.
+        surfaceView.setZOrderOnTop(false);
+        surfaceView.setZOrderMediaOverlay(false);
         // Give the content view an explicit focus target. Pointer-captured events
         // are routed along the focused-view path; the root override below then
         // intercepts them before the focused child handles them.

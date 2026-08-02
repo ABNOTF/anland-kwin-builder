@@ -91,6 +91,7 @@ public class FclControllerView extends FrameLayout {
     private int lastLoggedLayoutW = -1;
     private int lastLoggedLayoutH = -1;
     private int touchLogCount = 0;
+    private boolean overlayDrawLogged = false;
 
     // Position overrides: control id -> [x thousandths, y thousandths].
     // Saved overrides survive rebuilds; pending ones only exist while editing.
@@ -285,11 +286,19 @@ public class FclControllerView extends FrameLayout {
     @Override
     protected void onDraw(Canvas canvas) {
         super.onDraw(canvas);
-        if (controller != null && getChildCount() == 0) {
-            debugPaint.setColor(Color.RED);
-            debugPaint.setTextSize(dp(18));
-            canvas.drawText("FCL: 0 controls", dp(12), dp(24), debugPaint);
+        if (!overlayDrawLogged) {
+            overlayDrawLogged = true;
+            Log.d(TAG, "overlay onDraw: " + getWidth() + "x" + getHeight()
+                    + " children=" + getChildCount());
         }
+        // Layer self-test: this translucent red wash proves the overlay layer is
+        // actually composited above the desktop surface. If it is invisible, the
+        // whole app window layer is being covered by the SurfaceView.
+        debugPaint.setColor(0x22FF0000);
+        canvas.drawRect(0, 0, getWidth(), getHeight(), debugPaint);
+        debugPaint.setColor(Color.RED);
+        debugPaint.setTextSize(dp(16));
+        canvas.drawText("FCL OVERLAY", dp(10), dp(28), debugPaint);
     }
 
     private boolean hitPassThrough(MotionEvent ev) {
