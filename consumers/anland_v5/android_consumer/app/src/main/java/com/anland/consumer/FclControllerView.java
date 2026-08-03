@@ -52,20 +52,127 @@ public class FclControllerView extends FrameLayout {
     private static final int LONG_PRESS_MS = 400;
     private static final int AUTO_CLICK_MS = 20;
 
-    // Common evdev keycodes for the editor's keycode picker (FCL-style).
+    // Full FCL keycode table (FCLKeycodes) + anland mouse keys.
     private static final Object[][] KEYCODE_ENTRIES = {
-        {1, "ESC"}, {2, "1"}, {3, "2"}, {4, "3"}, {5, "4"}, {6, "5"},
-        {7, "6"}, {8, "7"}, {9, "8"}, {10, "9"}, {11, "0"},
-        {14, "BACKSPACE"}, {15, "TAB"}, {28, "ENTER"}, {57, "SPACE"}, {58, "CAPS"},
-        {16, "Q"}, {17, "W"}, {18, "E"}, {19, "R"}, {20, "T"}, {21, "Y"},
-        {22, "U"}, {23, "I"}, {24, "O"}, {25, "P"},
-        {30, "A"}, {31, "S"}, {32, "D"}, {33, "F"}, {34, "G"}, {35, "H"},
-        {36, "J"}, {37, "K"}, {38, "L"}, {44, "Z"}, {45, "X"}, {46, "C"},
-        {47, "V"}, {48, "B"}, {49, "N"}, {50, "M"},
-        {29, "CTRL"}, {42, "SHIFT"}, {56, "ALT"}, {125, "META"},
-        {59, "F1"}, {60, "F2"}, {61, "F3"}, {62, "F4"}, {63, "F5"}, {64, "F6"},
-        {65, "F7"}, {66, "F8"}, {67, "F9"}, {68, "F10"}, {87, "F11"}, {88, "F12"},
-        {103, "↑"}, {105, "←"}, {106, "→"}, {108, "↓"}, {102, "HOME"}, {107, "END"},
+        {0, "RESERVED"},
+                {1, "ESC"},
+                {2, "1"},
+                {3, "2"},
+                {4, "3"},
+                {5, "4"},
+                {6, "5"},
+                {7, "6"},
+                {8, "7"},
+                {9, "8"},
+                {10, "9"},
+                {11, "0"},
+                {12, "MINUS"},
+                {13, "EQUAL"},
+                {14, "BACKSPACE"},
+                {15, "TAB"},
+                {16, "Q"},
+                {17, "W"},
+                {18, "E"},
+                {19, "R"},
+                {20, "T"},
+                {21, "Y"},
+                {22, "U"},
+                {23, "I"},
+                {24, "O"},
+                {25, "P"},
+                {26, "LEFTBRACE"},
+                {27, "RIGHTBRACE"},
+                {28, "ENTER"},
+                {29, "LEFTCTRL"},
+                {30, "A"},
+                {31, "S"},
+                {32, "D"},
+                {33, "F"},
+                {34, "G"},
+                {35, "H"},
+                {36, "J"},
+                {37, "K"},
+                {38, "L"},
+                {39, "SEMICOLON"},
+                {40, "APOSTROPHE"},
+                {41, "GRAVE"},
+                {42, "LEFTSHIFT"},
+                {43, "BACKSLASH"},
+                {44, "Z"},
+                {45, "X"},
+                {46, "C"},
+                {47, "V"},
+                {48, "B"},
+                {49, "N"},
+                {50, "M"},
+                {51, "COMMA"},
+                {52, "DOT"},
+                {53, "SLASH"},
+                {54, "RIGHTSHIFT"},
+                {55, "KPASTERISK"},
+                {56, "LEFTALT"},
+                {57, "SPACE"},
+                {58, "CAPSLOCK"},
+                {59, "F1"},
+                {60, "F2"},
+                {61, "F3"},
+                {62, "F4"},
+                {63, "F5"},
+                {64, "F6"},
+                {65, "F7"},
+                {66, "F8"},
+                {67, "F9"},
+                {68, "F10"},
+                {69, "NUMLOCK"},
+                {70, "SCROLLLOCK"},
+                {71, "KP7"},
+                {72, "KP8"},
+                {73, "KP9"},
+                {74, "KPMINUS"},
+                {75, "KP4"},
+                {76, "KP5"},
+                {77, "KP6"},
+                {78, "KPPLUS"},
+                {79, "KP1"},
+                {80, "KP2"},
+                {81, "KP3"},
+                {82, "KP0"},
+                {83, "KPDOT"},
+                {87, "F11"},
+                {88, "F12"},
+                {96, "KPENTER"},
+                {97, "RIGHTCTRL"},
+                {98, "KPSLASH"},
+                {99, "SYSRQ"},
+                {100, "RIGHTALT"},
+                {102, "HOME"},
+                {103, "UP"},
+                {104, "PAGEUP"},
+                {105, "LEFT"},
+                {106, "RIGHT"},
+                {107, "END"},
+                {108, "DOWN"},
+                {109, "PAGEDOWN"},
+                {110, "INSERT"},
+                {111, "DELETE"},
+                {117, "KPEQUAL"},
+                {119, "PAUSE"},
+                {121, "KPCOMMA"},
+                {125, "LEFTMATA"},
+                {126, "RIGHTMETA"},
+                {183, "F13"},
+                {184, "F14"},
+                {185, "F15"},
+                {186, "F16"},
+                {187, "F17"},
+                {188, "F18"},
+                {189, "F19"},
+                {190, "F20"},
+                {191, "F21"},
+                {192, "F22"},
+                {193, "F23"},
+                {194, "F24"},
+                {240, "UNKNOWN"},
         {1000, "鼠标左键"}, {1001, "鼠标中键"}, {1002, "鼠标右键"},
         {1003, "滚轮上"}, {1004, "滚轮下"},
     };
@@ -723,6 +830,52 @@ public class FclControllerView extends FrameLayout {
         b.setBackground(roundedDrawable(selected ? 0xFF2196F3 : 0x22000000, dp(10)));
         return b;
     }
+
+        private void openKeycodePicker(final List<Integer> codes, final Runnable after) {
+            final int n = KEYCODE_ENTRIES.length;
+            String[] labels = new String[n];
+            boolean[] checked = new boolean[n];
+            for (int i = 0; i < n; i++) {
+                int code = (Integer) KEYCODE_ENTRIES[i][0];
+                labels[i] = KEYCODE_ENTRIES[i][1] + " (" + code + ")";
+                checked[i] = codes.contains(code);
+            }
+            new AlertDialog.Builder(getContext())
+                    .setTitle("选择键码")
+                    .setMultiChoiceItems(labels, checked, (d, which, isChecked) -> {
+                        int code = (Integer) KEYCODE_ENTRIES[which][0];
+                        if (isChecked) {
+                            if (!codes.contains(code)) {
+                                codes.add(code);
+                            }
+                        } else {
+                            codes.remove((Integer) code);
+                        }
+                    })
+                    .setPositiveButton("确定", (d, w) -> after.run())
+                    .setNegativeButton("取消", null)
+                    .show();
+        }
+
+        private int parseIntClamped(String s, int min, int max, int def) {
+            try {
+                int v = Integer.parseInt(s.trim());
+                return Math.max(min, Math.min(max, v));
+            } catch (Exception e) {
+                return def;
+            }
+        }
+
+        private String joinCodes(List<Integer> codes) {
+            StringBuilder sb = new StringBuilder();
+            for (int c : codes) {
+                if (sb.length() > 0) {
+                    sb.append(",");
+                }
+                sb.append(c);
+            }
+            return sb.length() == 0 ? "（无）" : sb.toString();
+        }
 
     @Override
     protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
@@ -1423,31 +1576,6 @@ public class FclControllerView extends FrameLayout {
             }
         }
 
-        private void openKeycodePicker(final List<Integer> codes, final Runnable after) {
-            final int n = KEYCODE_ENTRIES.length;
-            String[] labels = new String[n];
-            boolean[] checked = new boolean[n];
-            for (int i = 0; i < n; i++) {
-                int code = (Integer) KEYCODE_ENTRIES[i][0];
-                labels[i] = KEYCODE_ENTRIES[i][1] + " (" + code + ")";
-                checked[i] = codes.contains(code);
-            }
-            new AlertDialog.Builder(getContext())
-                    .setTitle("选择键码")
-                    .setMultiChoiceItems(labels, checked, (d, which, isChecked) -> {
-                        int code = (Integer) KEYCODE_ENTRIES[which][0];
-                        if (isChecked) {
-                            if (!codes.contains(code)) {
-                                codes.add(code);
-                            }
-                        } else {
-                            codes.remove((Integer) code);
-                        }
-                    })
-                    .setPositiveButton("确定", (d, w) -> after.run())
-                    .setNegativeButton("取消", null)
-                    .show();
-        }
 
         private void cloneButtonJson(JSONObject btn) {
             try {
@@ -1500,25 +1628,7 @@ public class FclControllerView extends FrameLayout {
             }
         }
 
-        private int parseIntClamped(String s, int min, int max, int def) {
-            try {
-                int v = Integer.parseInt(s.trim());
-                return Math.max(min, Math.min(max, v));
-            } catch (Exception e) {
-                return def;
-            }
-        }
 
-        private String joinCodes(List<Integer> codes) {
-            StringBuilder sb = new StringBuilder();
-            for (int c : codes) {
-                if (sb.length() > 0) {
-                    sb.append(",");
-                }
-                sb.append(c);
-            }
-            return sb.length() == 0 ? "（无）" : sb.toString();
-        }
 
         private void trigger(FclController.Event ev, boolean enable, boolean clickType,
                              int eventType) {
@@ -1851,10 +1961,307 @@ public class FclControllerView extends FrameLayout {
                         int yTh = ph > getHeight()
                                 ? Math.round(1000f * getY() / (ph - getHeight())) : 0;
                         setPendingPosition(data.id, xTh, yTh);
+                    } else {
+                        openDirectionDialog();
                     }
                     return true;
             }
             return true;
+        }
+
+        /** FCL-style direction editor: position/size/style + direction keycodes. */
+        private void openDirectionDialog() {
+            if (controller == null) {
+                return;
+            }
+            final JSONObject dir = controller.findControlJson(data.id);
+            if (dir == null) {
+                return;
+            }
+            final int pad = dp(12);
+            LinearLayout root = new LinearLayout(getContext());
+            root.setOrientation(LinearLayout.VERTICAL);
+            root.setPadding(pad, pad, pad, pad);
+            root.setBackground(roundedDrawable(0xFFF5F5F5, dp(16)));
+
+            TextView titleView = new TextView(getContext());
+            titleView.setText("编辑方向控件");
+            titleView.setTextSize(17);
+            titleView.setTypeface(null, Typeface.BOLD);
+            titleView.setTextColor(0xFF212121);
+            titleView.setPadding(0, 0, 0, dp(8));
+            root.addView(titleView);
+
+            EditText xInput = new EditText(getContext());
+            xInput.setHint("X位置（千分比 0-1000）");
+            xInput.setInputType(InputType.TYPE_CLASS_NUMBER);
+            xInput.setText(String.valueOf(data.baseInfo.xPosition));
+            root.addView(xInput);
+
+            EditText yInput = new EditText(getContext());
+            yInput.setHint("Y位置（千分比 0-1000）");
+            yInput.setInputType(InputType.TYPE_CLASS_NUMBER);
+            yInput.setText(String.valueOf(data.baseInfo.yPosition));
+            root.addView(yInput);
+
+            Spinner sizeSpinner = new Spinner(getContext());
+            String[] sizeNames = {"百分比", "绝对dp"};
+            sizeSpinner.setAdapter(new ArrayAdapter<>(getContext(),
+                    android.R.layout.simple_spinner_dropdown_item, sizeNames));
+            sizeSpinner.setSelection("ABSOLUTE".equals(data.baseInfo.sizeType) ? 1 : 0);
+            root.addView(sizeSpinner);
+
+            Spinner refSpinner = new Spinner(getContext());
+            String[] refNames = {"参照屏宽", "参照屏高"};
+            refSpinner.setAdapter(new ArrayAdapter<>(getContext(),
+                    android.R.layout.simple_spinner_dropdown_item, refNames));
+            refSpinner.setSelection("SCREEN_WIDTH"
+                    .equals(data.baseInfo.percentageWidth.reference) ? 0 : 1);
+            root.addView(refSpinner);
+
+            EditText sizeInput = new EditText(getContext());
+            sizeInput.setHint("尺寸（百分比 0-1000 或 dp）");
+            sizeInput.setInputType(InputType.TYPE_CLASS_NUMBER);
+            int sizeVal = "ABSOLUTE".equals(data.baseInfo.sizeType)
+                    ? data.baseInfo.absoluteWidth
+                    : data.baseInfo.percentageWidth.size;
+            sizeInput.setText(String.valueOf(sizeVal));
+            root.addView(sizeInput);
+
+            Spinner styleSpinner = new Spinner(getContext());
+            List<String> styleNames = new ArrayList<>(controller.directionStylesByName.keySet());
+            if (styleNames.isEmpty()) {
+                styleNames.add("Default");
+            }
+            styleSpinner.setAdapter(new ArrayAdapter<>(getContext(),
+                    android.R.layout.simple_spinner_dropdown_item, styleNames));
+            int styleIdx = styleNames.indexOf(dir.optString("style", "Default"));
+            styleSpinner.setSelection(styleIdx < 0 ? 0 : styleIdx);
+            root.addView(styleSpinner);
+
+            Spinner followSpinner = new Spinner(getContext());
+            String[] followNames = {"固定", "中心跟随", "跟随"};
+            followSpinner.setAdapter(new ArrayAdapter<>(getContext(),
+                    android.R.layout.simple_spinner_dropdown_item, followNames));
+            String follow = data.followOption;
+            followSpinner.setSelection("FIXED".equals(follow) ? 0
+                    : ("CENTER_FOLLOW".equals(follow) ? 1 : 2));
+            root.addView(followSpinner);
+
+            final List<Integer> upCodes = new ArrayList<>();
+            final List<Integer> downCodes = new ArrayList<>();
+            final List<Integer> leftCodes = new ArrayList<>();
+            final List<Integer> rightCodes = new ArrayList<>();
+            final List<Integer> sneakCodes = new ArrayList<>();
+            addAll(upCodes, data.upKeycodes);
+            addAll(downCodes, data.downKeycodes);
+            addAll(leftCodes, data.leftKeycodes);
+            addAll(rightCodes, data.rightKeycodes);
+            sneakCodes.add(data.sneakKeycode);
+
+            Button upBtn = new Button(getContext());
+            upBtn.setText("上键码: " + joinCodes(upCodes));
+            upBtn.setOnClickListener(v -> openKeycodePicker(upCodes,
+                    () -> upBtn.setText("上键码: " + joinCodes(upCodes))));
+            root.addView(upBtn);
+
+            Button downBtn = new Button(getContext());
+            downBtn.setText("下键码: " + joinCodes(downCodes));
+            downBtn.setOnClickListener(v -> openKeycodePicker(downCodes,
+                    () -> downBtn.setText("下键码: " + joinCodes(downCodes))));
+            root.addView(downBtn);
+
+            Button leftBtn = new Button(getContext());
+            leftBtn.setText("左键码: " + joinCodes(leftCodes));
+            leftBtn.setOnClickListener(v -> openKeycodePicker(leftCodes,
+                    () -> leftBtn.setText("左键码: " + joinCodes(leftCodes))));
+            root.addView(leftBtn);
+
+            Button rightBtn = new Button(getContext());
+            rightBtn.setText("右键码: " + joinCodes(rightCodes));
+            rightBtn.setOnClickListener(v -> openKeycodePicker(rightCodes,
+                    () -> rightBtn.setText("右键码: " + joinCodes(rightCodes))));
+            root.addView(rightBtn);
+
+            Switch sneakSwitch = new Switch(getContext());
+            sneakSwitch.setText("双击潜行");
+            sneakSwitch.setChecked(data.sneak);
+            root.addView(sneakSwitch);
+
+            Button sneakKeyBtn = new Button(getContext());
+            sneakKeyBtn.setText("潜行键码: " + joinCodes(sneakCodes));
+            sneakKeyBtn.setOnClickListener(v -> openKeycodePicker(sneakCodes,
+                    () -> sneakKeyBtn.setText("潜行键码: " + joinCodes(sneakCodes))));
+            root.addView(sneakKeyBtn);
+
+            LinearLayout bottom = new LinearLayout(getContext());
+            bottom.setOrientation(LinearLayout.HORIZONTAL);
+            Button okBtn = accentButton("确定");
+            Button cancelBtn = tabButton("取消", false);
+            Button cloneBtn = tabButton("克隆", false);
+            Button delBtn = tabButton("删除", false);
+            bottom.addView(okBtn);
+            bottom.addView(cancelBtn);
+            bottom.addView(cloneBtn);
+            bottom.addView(delBtn);
+            root.addView(bottom);
+
+            ScrollView scroll = new ScrollView(getContext());
+            scroll.addView(root);
+            android.app.Dialog dialog = new android.app.Dialog(getContext());
+            if (dialog.getWindow() != null) {
+                dialog.getWindow().setBackgroundDrawable(
+                        new android.graphics.drawable.ColorDrawable(0));
+            }
+            dialog.setContentView(scroll);
+            okBtn.setOnClickListener(v -> {
+                saveDirectionJson(
+                        xInput.getText().toString(),
+                        yInput.getText().toString(),
+                        sizeSpinner.getSelectedItemPosition(),
+                        refSpinner.getSelectedItemPosition(),
+                        sizeInput.getText().toString(),
+                        styleSpinner.getSelectedItem().toString(),
+                        followSpinner.getSelectedItemPosition(),
+                        upCodes, downCodes, leftCodes, rightCodes,
+                        sneakSwitch.isChecked(), sneakCodes);
+                dialog.dismiss();
+            });
+            cancelBtn.setOnClickListener(v -> dialog.dismiss());
+            cloneBtn.setOnClickListener(v -> {
+                cloneDirectionJson(dir);
+                dialog.dismiss();
+            });
+            delBtn.setOnClickListener(v -> {
+                deleteDirectionJson(dir);
+                dialog.dismiss();
+            });
+            dialog.show();
+        }
+
+        private void saveDirectionJson(String xs, String ys, int sizeIdx, int refIdx,
+                                       String sizeVal, String style, int followIdx,
+                                       List<Integer> up, List<Integer> down,
+                                       List<Integer> left, List<Integer> right,
+                                       boolean sneak, List<Integer> sneakCodes) {
+            JSONObject dir = controller.findControlJson(data.id);
+            if (dir == null) {
+                return;
+            }
+            try {
+                JSONObject base = dir.optJSONObject("baseInfo");
+                if (base == null) {
+                    base = new JSONObject();
+                    dir.put("baseInfo", base);
+                }
+                JSONObject ev = dir.optJSONObject("event");
+                if (ev == null) {
+                    ev = new JSONObject();
+                    dir.put("event", ev);
+                }
+                dir.put("style", style);
+                base.put("visibilityType", "ALWAYS");
+                base.put("xPosition", parseIntClamped(xs, 0, 1000, data.baseInfo.xPosition));
+                base.put("yPosition", parseIntClamped(ys, 0, 1000, data.baseInfo.yPosition));
+                boolean abs = sizeIdx == 1;
+                base.put("sizeType", abs ? "ABSOLUTE" : "PERCENTAGE");
+                String reference = refIdx == 0 ? "SCREEN_WIDTH" : "SCREEN_HEIGHT";
+                int size = parseIntClamped(sizeVal, 0, abs ? 2000 : 1000, 450);
+                if (abs) {
+                    base.put("absoluteWidth", size);
+                    base.put("absoluteHeight", size);
+                } else {
+                    base.put("percentageWidth", new JSONObject()
+                            .put("reference", reference).put("size", size));
+                    base.put("percentageHeight", new JSONObject()
+                            .put("reference", reference).put("size", size));
+                }
+                ev.put("upKeycode", toKeycodeArray(up));
+                ev.put("downKeycode", toKeycodeArray(down));
+                ev.put("leftKeycode", toKeycodeArray(left));
+                ev.put("rightKeycode", toKeycodeArray(right));
+                ev.put("followOption", followIdx == 0 ? "FIXED"
+                        : (followIdx == 1 ? "CENTER_FOLLOW" : "FOLLOW"));
+                ev.put("sneak", sneak);
+                ev.put("sneakKeycode", sneakCodes.isEmpty() ? 42 : sneakCodes.get(0));
+                dir.put("event", ev);
+                applyPendingPositionsToJson();
+                if (controller.saveToFile(getContext())) {
+                    reloadController();
+                } else {
+                    Toast.makeText(getContext(), "保存失败", Toast.LENGTH_SHORT).show();
+                }
+            } catch (JSONException e) {
+                Toast.makeText(getContext(), "保存失败: " + e.getMessage(),
+                        Toast.LENGTH_SHORT).show();
+            }
+        }
+
+        private void cloneDirectionJson(JSONObject dir) {
+            try {
+                JSONObject copy = new JSONObject(dir.toString());
+                copy.put("id", String.format(java.util.Locale.US, "%08x",
+                        new java.util.Random().nextInt(0x10000000)));
+                JSONObject group = groupJsonForControl(data.id);
+                if (group == null) {
+                    return;
+                }
+                JSONObject vd = group.optJSONObject("viewData");
+                if (vd == null) {
+                    vd = new JSONObject();
+                    group.put("viewData", vd);
+                }
+                JSONArray dl = vd.optJSONArray("directionList");
+                if (dl == null) {
+                    dl = new JSONArray();
+                    vd.put("directionList", dl);
+                }
+                dl.put(copy);
+                if (controller.saveToFile(getContext())) {
+                    reloadController();
+                }
+            } catch (JSONException e) {
+                Toast.makeText(getContext(), "克隆失败: " + e.getMessage(),
+                        Toast.LENGTH_SHORT).show();
+            }
+        }
+
+        private void deleteDirectionJson(JSONObject dir) {
+            JSONObject group = groupJsonForControl(data.id);
+            if (group == null) {
+                return;
+            }
+            JSONObject vd = group.optJSONObject("viewData");
+            JSONArray dl = vd != null ? vd.optJSONArray("directionList") : null;
+            if (dl == null) {
+                return;
+            }
+            for (int i = 0; i < dl.length(); i++) {
+                JSONObject d = dl.optJSONObject(i);
+                if (d != null && data.id.equals(d.optString("id"))) {
+                    dl.remove(i);
+                    break;
+                }
+            }
+            if (controller.saveToFile(getContext())) {
+                reloadController();
+            }
+        }
+
+        private void addAll(List<Integer> target, int[] codes) {
+            if (codes != null) {
+                for (int c : codes) {
+                    target.add(c);
+                }
+            }
+        }
+
+        private JSONArray toKeycodeArray(List<Integer> codes) {
+            JSONArray arr = new JSONArray();
+            for (int c : codes) {
+                arr.put(c);
+            }
+            return arr;
         }
 
         private boolean insideRocker(float x, float y) {
