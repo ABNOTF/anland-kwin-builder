@@ -201,6 +201,9 @@ public class FclControllerView extends FrameLayout {
         void openSettings();
         /** Switch the current orientation's controller profile; null = default. */
         void selectController(String id);
+        /** The overlay must yield while its editor dialogs are open: the overlay
+         *  window sits above any app dialog and would swallow its touches. */
+        void setEditorDialogOpen(boolean open);
     }
 
     /**
@@ -244,6 +247,20 @@ public class FclControllerView extends FrameLayout {
 
     public void setBridge(Bridge bridge) {
         this.bridge = bridge;
+    }
+
+    /** Show a dialog from the overlay context, hiding the overlay first so the
+     *  fullscreen overlay window cannot block the dialog's touches. */
+    private void showOverlayDialog(android.app.Dialog dialog) {
+        if (bridge != null) {
+            bridge.setEditorDialogOpen(true);
+        }
+        dialog.setOnDismissListener(d -> {
+            if (bridge != null) {
+                bridge.setEditorDialogOpen(false);
+            }
+        });
+        dialog.show();
     }
 
     public void setSurfaceTouchForwarder(SurfaceTouchForwarder forwarder) {
@@ -412,13 +429,14 @@ public class FclControllerView extends FrameLayout {
         if (!editMode) {
             return;
         }
-        new AlertDialog.Builder(getContext())
+        AlertDialog dialog = new AlertDialog.Builder(getContext())
                 .setTitle("保存修改？")
                 .setMessage("是否保存对控制器的修改？")
                 .setPositiveButton("保存", (d, w) -> saveEdit())
                 .setNegativeButton("不保存", (d, w) -> discardPositions())
                 .setNeutralButton("取消", null)
-                .show();
+                .create();
+        showOverlayDialog(dialog);
     }
 
     /** Re-parse the controller from disk/asset (after edits) and rebuild. */
@@ -751,7 +769,7 @@ public class FclControllerView extends FrameLayout {
                 labels[i] = KEYCODE_ENTRIES[i][1] + " (" + code + ")";
                 checked[i] = codes.contains(code);
             }
-            new AlertDialog.Builder(getContext())
+            AlertDialog dialog = new AlertDialog.Builder(getContext())
                     .setTitle("选择键码")
                     .setMultiChoiceItems(labels, checked, (d, which, isChecked) -> {
                         int code = (Integer) KEYCODE_ENTRIES[which][0];
@@ -765,7 +783,8 @@ public class FclControllerView extends FrameLayout {
                     })
                     .setPositiveButton("确定", (d, w) -> after.run())
                     .setNegativeButton("取消", null)
-                    .show();
+                    .create();
+            showOverlayDialog(dialog);
         }
 
         private int parseIntClamped(String s, int min, int max, int def) {
@@ -1397,19 +1416,23 @@ public class FclControllerView extends FrameLayout {
             android.app.Dialog dialog = new android.app.Dialog(getContext());
             int dialogW = Math.min(dp(500),
                     getResources().getDisplayMetrics().widthPixels - dp(24));
+            int dialogH = getResources().getDisplayMetrics().heightPixels - dp(24);
             dialog.setContentView(root, new android.view.ViewGroup.LayoutParams(
-                    dialogW, android.view.ViewGroup.LayoutParams.MATCH_PARENT));
+                    dialogW, dialogH));
             if (dialog.getWindow() != null) {
                 dialog.getWindow().setBackgroundDrawable(
                         new android.graphics.drawable.ColorDrawable(0));
                 dialog.getWindow().setGravity(Gravity.CENTER);
-                dialog.getWindow().setLayout(dialogW,
-                        android.view.ViewGroup.LayoutParams.MATCH_PARENT);
+                dialog.getWindow().setLayout(dialogW, dialogH);
             }
             dialog.setOnShowListener(d -> {
                 if (dialog.getWindow() != null) {
-                    dialog.getWindow().setLayout(dialogW,
-                            android.view.ViewGroup.LayoutParams.MATCH_PARENT);
+                    android.view.WindowManager.LayoutParams attrs =
+                            dialog.getWindow().getAttributes();
+                    attrs.gravity = Gravity.CENTER;
+                    attrs.width = dialogW;
+                    attrs.height = dialogH;
+                    dialog.getWindow().setAttributes(attrs);
                 }
             });
             okBtn.setOnClickListener(v -> {
@@ -1442,7 +1465,7 @@ public class FclControllerView extends FrameLayout {
                 deleteButtonJson(btn);
                 dialog.dismiss();
             });
-            dialog.show();
+            showOverlayDialog(dialog);
         }
 
         private void savePropertyJson(String text, String xs, String ys,
@@ -2053,19 +2076,23 @@ public class FclControllerView extends FrameLayout {
             android.app.Dialog dialog = new android.app.Dialog(getContext());
             int dialogW = Math.min(dp(500),
                     getResources().getDisplayMetrics().widthPixels - dp(24));
+            int dialogH = getResources().getDisplayMetrics().heightPixels - dp(24);
             dialog.setContentView(scroll, new android.view.ViewGroup.LayoutParams(
-                    dialogW, android.view.ViewGroup.LayoutParams.MATCH_PARENT));
+                    dialogW, dialogH));
             if (dialog.getWindow() != null) {
                 dialog.getWindow().setBackgroundDrawable(
                         new android.graphics.drawable.ColorDrawable(0));
                 dialog.getWindow().setGravity(Gravity.CENTER);
-                dialog.getWindow().setLayout(dialogW,
-                        android.view.ViewGroup.LayoutParams.MATCH_PARENT);
+                dialog.getWindow().setLayout(dialogW, dialogH);
             }
             dialog.setOnShowListener(d -> {
                 if (dialog.getWindow() != null) {
-                    dialog.getWindow().setLayout(dialogW,
-                            android.view.ViewGroup.LayoutParams.MATCH_PARENT);
+                    android.view.WindowManager.LayoutParams attrs =
+                            dialog.getWindow().getAttributes();
+                    attrs.gravity = Gravity.CENTER;
+                    attrs.width = dialogW;
+                    attrs.height = dialogH;
+                    dialog.getWindow().setAttributes(attrs);
                 }
             });
             okBtn.setOnClickListener(v -> {
@@ -2090,7 +2117,7 @@ public class FclControllerView extends FrameLayout {
                 deleteDirectionJson(dir);
                 dialog.dismiss();
             });
-            dialog.show();
+            showOverlayDialog(dialog);
         }
 
         private void saveDirectionJson(String xs, String ys, int sizeIdx, int refIdx,

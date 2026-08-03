@@ -595,6 +595,16 @@ public class MainActivity extends Activity
                     fclControllerView.rebuild();
                 }
             }
+            // Editor dialogs are app windows BELOW the overlay window; hide the
+            // overlay (keep its window, make it non-touchable) so the dialog is
+            // neither visually covered nor touch-blocked, then restore it.
+            @Override public void setEditorDialogOpen(boolean open) {
+                if (open) {
+                    hideFclControllerForIme();
+                } else if (isFclBottomMode() && fclControllerView != null) {
+                    showFclOverlayWindow();
+                }
+            }
         });
         fclControllerView.setVisibility(View.GONE);
         // The FCL overlay lives in its OWN window (TYPE_APPLICATION_PANEL). A
@@ -878,6 +888,7 @@ public class MainActivity extends Activity
         }
         fclControllerView.rebuild();
         fclControllerView.setVisibility(View.VISIBLE);
+        mFclHiddenForIme = false;
         if (fclWindowAdded && fclWindowManager != null) {
             try {
                 WindowManager.LayoutParams lp =
