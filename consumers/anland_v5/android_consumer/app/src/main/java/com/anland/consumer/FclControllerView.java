@@ -722,9 +722,11 @@ public class FclControllerView extends FrameLayout {
 
     private Switch fclSwitch(String text) {
         Switch s = new Switch(getContext());
-        s.setText(text);
+        // The row label carries the name; the switch itself stays bare so the
+        // tiny ON/OFF track text cannot collide with a second label.
+        s.setText("");
+        s.setShowText(false);
         s.setTextSize(14);
-        s.setTextColor(0xFF424242);
         return s;
     }
 
@@ -1241,7 +1243,7 @@ public class FclControllerView extends FrameLayout {
 
             Switch dragSwitch = fclSwitch("按住拖动移动鼠标");
             dragSwitch.setChecked(data.dragMoveMouse);
-            infoPanel.addView(formRow(formLabel("拖动鼠标"), dragSwitch));
+            infoPanel.addView(formRow(formLabel("按住拖动移动鼠标"), dragSwitch));
 
             EditText xInput = fclEditText("0-1000");
             xInput.setInputType(InputType.TYPE_CLASS_NUMBER);
@@ -1414,9 +1416,10 @@ public class FclControllerView extends FrameLayout {
             root.addView(bottom);
 
             android.app.Dialog dialog = new android.app.Dialog(getContext());
-            int dialogW = Math.min(dp(500),
-                    getResources().getDisplayMetrics().widthPixels - dp(24));
-            int dialogH = getResources().getDisplayMetrics().heightPixels - dp(24);
+            int screenW = getResources().getDisplayMetrics().widthPixels;
+            int screenH = getResources().getDisplayMetrics().heightPixels;
+            int dialogW = Math.min(dp(500), screenW - dp(24));
+            int dialogH = (int) (screenH * 0.88f);
             dialog.setContentView(root, new android.view.ViewGroup.LayoutParams(
                     dialogW, dialogH));
             if (dialog.getWindow() != null) {
@@ -1429,7 +1432,9 @@ public class FclControllerView extends FrameLayout {
                 if (dialog.getWindow() != null) {
                     android.view.WindowManager.LayoutParams attrs =
                             dialog.getWindow().getAttributes();
-                    attrs.gravity = Gravity.CENTER;
+                    attrs.gravity = Gravity.TOP | Gravity.START;
+                    attrs.x = (screenW - dialogW) / 2;
+                    attrs.y = (screenH - dialogH) / 2;
                     attrs.width = dialogW;
                     attrs.height = dialogH;
                     dialog.getWindow().setAttributes(attrs);
@@ -2074,9 +2079,10 @@ public class FclControllerView extends FrameLayout {
             ScrollView scroll = new ScrollView(getContext());
             scroll.addView(root);
             android.app.Dialog dialog = new android.app.Dialog(getContext());
-            int dialogW = Math.min(dp(500),
-                    getResources().getDisplayMetrics().widthPixels - dp(24));
-            int dialogH = getResources().getDisplayMetrics().heightPixels - dp(24);
+            int screenW = getResources().getDisplayMetrics().widthPixels;
+            int screenH = getResources().getDisplayMetrics().heightPixels;
+            int dialogW = Math.min(dp(500), screenW - dp(24));
+            int dialogH = (int) (screenH * 0.88f);
             dialog.setContentView(scroll, new android.view.ViewGroup.LayoutParams(
                     dialogW, dialogH));
             if (dialog.getWindow() != null) {
@@ -2089,7 +2095,9 @@ public class FclControllerView extends FrameLayout {
                 if (dialog.getWindow() != null) {
                     android.view.WindowManager.LayoutParams attrs =
                             dialog.getWindow().getAttributes();
-                    attrs.gravity = Gravity.CENTER;
+                    attrs.gravity = Gravity.TOP | Gravity.START;
+                    attrs.x = (screenW - dialogW) / 2;
+                    attrs.y = (screenH - dialogH) / 2;
                     attrs.width = dialogW;
                     attrs.height = dialogH;
                     dialog.getWindow().setAttributes(attrs);
