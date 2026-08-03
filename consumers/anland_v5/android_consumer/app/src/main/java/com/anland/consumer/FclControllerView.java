@@ -1,12 +1,17 @@
 package com.anland.consumer;
 
-import android.app.AlertDialog;
+import android.app.Dialog;
 import android.content.Context;
+import android.content.res.ColorStateList;
 import android.graphics.Canvas;
+import android.graphics.Color;
 import android.graphics.Paint;
 import android.graphics.RectF;
 import android.graphics.Typeface;
+import android.graphics.drawable.ColorDrawable;
+import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
+import android.graphics.drawable.RippleDrawable;
 import android.content.SharedPreferences;
 import android.os.Handler;
 import android.os.Looper;
@@ -16,14 +21,17 @@ import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewConfiguration;
+import android.view.ViewGroup;
+import android.view.Window;
+import android.view.WindowManager;
 import android.widget.Button;
+import android.widget.Checkable;
 import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.Spinner;
 import android.widget.ArrayAdapter;
-import android.widget.Switch;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -43,11 +51,25 @@ import java.util.Map;
  * The event model follows FCL's ControlButton / ControlDirection behaviour:
  * press / long-press / click / double-click events, auto-keep latching,
  * auto-click repeat, movable buttons, pointer-follow buttons, view-group
- * toggling and the Input (IME) button. The controller *editor* is not ported.
+ * toggling and the Input (IME) button. Its editor follows FCL's information /
+ * event structure while using lightweight views that fit anland's dependency-
+ * free Android client.
  */
 public class FclControllerView extends FrameLayout {
 
     private static final String TAG = "FclController";
+
+    // Editor palette.  The controller overlay itself still uses the colours
+    // from its imported FCL profile; these colours only style the editor UI.
+    private static final int UI_ACCENT = 0xFF3478F6;
+    private static final int UI_ACCENT_SOFT = 0xFFEAF1FF;
+    private static final int UI_SURFACE = 0xFFFFFFFF;
+    private static final int UI_SURFACE_ALT = 0xFFF7F9FC;
+    private static final int UI_BORDER = 0xFFE2E7F0;
+    private static final int UI_TEXT = 0xFF172033;
+    private static final int UI_TEXT_MUTED = 0xFF687386;
+    private static final int UI_DANGER = 0xFFD83A52;
+    private static final int UI_DANGER_SOFT = 0xFFFFEDF0;
 
     private static final int LONG_PRESS_MS = 400;
     private static final int AUTO_CLICK_MS = 20;
@@ -221,6 +243,7 @@ public class FclControllerView extends FrameLayout {
     private final Map<String, Boolean> groupVisible = new HashMap<>();
     private FclController controller;
     private Bridge bridge;
+    private int openEditorDialogCount;
     private float mouseSensitivity = 1f;
     private boolean editMode = false;
     private SurfaceTouchForwarder surfaceForwarder;
@@ -251,16 +274,29 @@ public class FclControllerView extends FrameLayout {
 
     /** Show a dialog from the overlay context, hiding the overlay first so the
      *  fullscreen overlay window cannot block the dialog's touches. */
-    private void showOverlayDialog(android.app.Dialog dialog) {
-        if (bridge != null) {
+    private void showOverlayDialog(Dialog dialog) {
+        // Dialogs can be nested (the property editor opens the keycode picker).
+        // Reference counting prevents the fullscreen controller overlay from
+        // being restored over the still-open parent dialog.
+        openEditorDialogCount++;
+        if (openEditorDialogCount == 1 && bridge != null) {
             bridge.setEditorDialogOpen(true);
         }
         dialog.setOnDismissListener(d -> {
-            if (bridge != null) {
+            openEditorDialogCount = Math.max(0, openEditorDialogCount - 1);
+            if (openEditorDialogCount == 0 && bridge != null) {
                 bridge.setEditorDialogOpen(false);
             }
         });
-        dialog.show();
+        try {
+            dialog.show();
+        } catch (RuntimeException e) {
+            openEditorDialogCount = Math.max(0, openEditorDialogCount - 1);
+            if (openEditorDialogCount == 0 && bridge != null) {
+                bridge.setEditorDialogOpen(false);
+            }
+            throw e;
+        }
     }
 
     public void setSurfaceTouchForwarder(SurfaceTouchForwarder forwarder) {
@@ -429,13 +465,47 @@ public class FclControllerView extends FrameLayout {
         if (!editMode) {
             return;
         }
-        AlertDialog dialog = new AlertDialog.Builder(getContext())
-                .setTitle("保存修改？")
-                .setMessage("是否保存对控制器的修改？")
-                .setPositiveButton("保存", (d, w) -> saveEdit())
-                .setNegativeButton("不保存", (d, w) -> discardPositions())
-                .setNeutralButton("取消", null)
-                .create();
+        LinearLayout root = createEditorCard(
+                "保存修改？", "退出编辑模式前，请处理尚未保存的位置调整");
+        TextView message = new TextView(getContext());
+        message.setText("保存会把当前拖动位置写入所选控制器；不保存只放弃尚未保存的拖动。");
+        message.setTextSize(14);
+        message.setTextColor(UI_TEXT);
+        message.setLineSpacing(0, 1.15f);
+        message.setPadding(dp(4), dp(18), dp(4), dp(18));
+        root.addView(message);
+
+        LinearLayout bottom = new LinearLayout(getContext());
+        bottom.setOrientation(LinearLayout.HORIZONTAL);
+        bottom.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
+        bottom.setPadding(0, dp(12), 0, 0);
+        Button cancelBtn = ghostButton("继续编辑");
+        Button discardBtn = dangerButton("不保存");
+        Button saveBtn = accentButton("保存");
+        bottom.addView(cancelBtn);
+        LinearLayout.LayoutParams discardParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT);
+        discardParams.setMarginStart(dp(8));
+        bottom.addView(discardBtn, discardParams);
+        LinearLayout.LayoutParams saveParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT);
+        saveParams.setMarginStart(dp(8));
+        bottom.addView(saveBtn, saveParams);
+        root.addView(divider());
+        root.addView(bottom);
+
+        Dialog dialog = createEditorDialog(root, false);
+        cancelBtn.setOnClickListener(v -> dialog.dismiss());
+        discardBtn.setOnClickListener(v -> {
+            discardPositions();
+            dialog.dismiss();
+        });
+        saveBtn.setOnClickListener(v -> {
+            saveEdit();
+            dialog.dismiss();
+        });
         showOverlayDialog(dialog);
     }
 
@@ -640,52 +710,94 @@ public class FclControllerView extends FrameLayout {
         return g;
     }
 
+    private GradientDrawable roundedStrokeDrawable(int color, int radiusPx,
+                                                    int strokeColor, int strokeWidthPx) {
+        GradientDrawable g = roundedDrawable(color, radiusPx);
+        if (strokeWidthPx > 0) {
+            g.setStroke(strokeWidthPx, strokeColor);
+        }
+        return g;
+    }
+
+    private Drawable rippleDrawable(int color, int radiusPx,
+                                    int strokeColor, int strokeWidthPx) {
+        GradientDrawable content = roundedStrokeDrawable(
+                color, radiusPx, strokeColor, strokeWidthPx);
+        GradientDrawable mask = roundedDrawable(Color.WHITE, radiusPx);
+        return new RippleDrawable(ColorStateList.valueOf(0x1F3478F6), content, mask);
+    }
+
+    private void prepareButton(Button b, String text) {
+        b.setText(text);
+        b.setTextSize(13);
+        b.setAllCaps(false);
+        b.setMinWidth(0);
+        b.setMinHeight(0);
+        b.setMinimumWidth(0);
+        b.setMinimumHeight(dp(40));
+        b.setPadding(dp(14), dp(7), dp(14), dp(7));
+        b.setGravity(Gravity.CENTER);
+        b.setStateListAnimator(null);
+    }
+
     private Button accentButton(String text) {
         Button b = new Button(getContext());
-        b.setText(text);
-        b.setAllCaps(false);
-        b.setTextColor(0xFFFFFFFF);
-        b.setBackground(roundedDrawable(0xFF2196F3, dp(10)));
+        prepareButton(b, text);
+        b.setTypeface(null, Typeface.BOLD);
+        b.setTextColor(Color.WHITE);
+        b.setBackground(rippleDrawable(UI_ACCENT, dp(12), UI_ACCENT, 0));
         return b;
     }
 
     private Button tabButton(String text, boolean selected) {
         Button b = new Button(getContext());
-        b.setText(text);
-        b.setAllCaps(false);
-        b.setTextColor(selected ? 0xFFFFFFFF : 0xFF2196F3);
-        b.setBackground(roundedDrawable(selected ? 0xFF2196F3 : 0x22000000, dp(10)));
+        prepareButton(b, text);
+        b.setTextSize(12);
+        setTabSelected(b, selected);
         return b;
     }
 
-    /** FCL-style rail icon button (⚙ / ⌨), 44dp, tinted when selected. */
-    private Button railIcon(String glyph) {
+    private void setTabSelected(Button button, boolean selected) {
+        button.setTypeface(null, selected ? Typeface.BOLD : Typeface.NORMAL);
+        button.setTextColor(selected ? Color.WHITE : UI_TEXT_MUTED);
+        button.setBackground(rippleDrawable(
+                selected ? UI_ACCENT : UI_SURFACE_ALT,
+                dp(11), selected ? UI_ACCENT : UI_BORDER, dp(1)));
+    }
+
+    /** Compact FCL-style side navigation, with text instead of font-dependent emoji. */
+    private Button railIcon(String label) {
         Button b = new Button(getContext());
-        b.setText(glyph);
-        b.setTextSize(18);
-        b.setAllCaps(false);
-        b.setMinWidth(0);
-        b.setMinHeight(0);
-        b.setPadding(dp(8), dp(8), dp(8), dp(8));
-        b.setTextColor(0xFF2196F3);
-        b.setBackground(roundedDrawable(0x00000000, dp(10)));
+        prepareButton(b, label);
+        b.setTextSize(12);
+        b.setLayoutParams(new LinearLayout.LayoutParams(dp(62), dp(46)));
+        setRailSelected(b, false);
         return b;
+    }
+
+    private void setRailSelected(Button button, boolean selected) {
+        button.setTypeface(null, selected ? Typeface.BOLD : Typeface.NORMAL);
+        button.setTextColor(selected ? UI_ACCENT : UI_TEXT_MUTED);
+        button.setBackground(rippleDrawable(
+                selected ? UI_ACCENT_SOFT : Color.TRANSPARENT,
+                dp(12), selected ? 0x553478F6 : Color.TRANSPARENT, dp(1)));
     }
 
     private TextView sectionHeader(String text) {
         TextView tv = new TextView(getContext());
         tv.setText(text);
-        tv.setTextSize(11);
-        tv.setTextColor(0xFF757575);
-        tv.setPadding(0, dp(6), 0, dp(2));
+        tv.setTextSize(12);
+        tv.setTypeface(null, Typeface.BOLD);
+        tv.setTextColor(UI_TEXT_MUTED);
+        tv.setPadding(dp(2), dp(8), 0, dp(7));
         return tv;
     }
 
     private View divider() {
         View v = new View(getContext());
-        v.setBackgroundColor(0xFFBDBDBD);
+        v.setBackgroundColor(UI_BORDER);
         v.setLayoutParams(new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, 1));
+                LinearLayout.LayoutParams.MATCH_PARENT, dp(1)));
         return v;
     }
 
@@ -693,8 +805,8 @@ public class FclControllerView extends FrameLayout {
         TextView tv = new TextView(getContext());
         tv.setText(text);
         tv.setTextSize(14);
-        tv.setTextColor(0xFF424242);
-        tv.setSingleLine(true);
+        tv.setTextColor(UI_TEXT);
+        tv.setMaxLines(2);
         return tv;
     }
 
@@ -703,12 +815,28 @@ public class FclControllerView extends FrameLayout {
         LinearLayout row = new LinearLayout(getContext());
         row.setOrientation(LinearLayout.HORIZONTAL);
         row.setGravity(Gravity.CENTER_VERTICAL);
-        row.setPadding(0, dp(3), 0, dp(3));
-        row.addView(label);
-        View spacer = new View(getContext());
-        spacer.setLayoutParams(new LinearLayout.LayoutParams(0, 0, 1f));
-        row.addView(spacer);
-        row.addView(control);
+        row.setMinimumHeight(dp(54));
+        row.setPadding(dp(14), dp(6), dp(12), dp(6));
+        row.setBackground(rippleDrawable(
+                UI_SURFACE, dp(13), UI_BORDER, dp(1)));
+        LinearLayout.LayoutParams rowParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT);
+        rowParams.setMargins(0, 0, 0, dp(8));
+        row.setLayoutParams(rowParams);
+
+        LinearLayout.LayoutParams labelParams = new LinearLayout.LayoutParams(
+                0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
+        labelParams.setMarginEnd(dp(12));
+        row.addView(label, labelParams);
+        row.addView(control, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT));
+        if (control instanceof FclToggle) {
+            row.setClickable(true);
+            row.setFocusable(true);
+            row.setOnClickListener(v -> ((FclToggle) control).toggle());
+        }
         return row;
     }
 
@@ -716,31 +844,284 @@ public class FclControllerView extends FrameLayout {
         EditText et = new EditText(getContext());
         et.setHint(hint);
         et.setTextSize(14);
+        et.setTextColor(UI_TEXT);
+        et.setHintTextColor(0xFF9AA3B2);
         et.setSingleLine(true);
+        et.setSelectAllOnFocus(true);
+        et.setMinWidth(dp(160));
+        et.setMinimumHeight(dp(42));
+        et.setPadding(dp(12), dp(7), dp(12), dp(7));
+        et.setBackground(roundedStrokeDrawable(
+                UI_SURFACE_ALT, dp(10), UI_BORDER, dp(1)));
         return et;
     }
 
-    private Switch fclSwitch(String text) {
-        Switch s = new Switch(getContext());
-        // The row label carries the name; the switch itself stays bare so the
-        // tiny ON/OFF track text cannot collide with a second label.
-        s.setText("");
-        s.setShowText(false);
-        s.setTextSize(14);
-        return s;
+    private Spinner fclSpinner(List<String> items) {
+        Spinner spinner = new Spinner(getContext(), Spinner.MODE_DROPDOWN);
+        ArrayAdapter<String> adapter = new ArrayAdapter<String>(getContext(),
+                android.R.layout.simple_spinner_item, items) {
+            private TextView styleView(View view, boolean dropdown) {
+                TextView tv = (TextView) view;
+                tv.setTextSize(13);
+                tv.setTextColor(UI_TEXT);
+                tv.setGravity(Gravity.CENTER_VERTICAL);
+                tv.setMinHeight(dp(dropdown ? 46 : 40));
+                tv.setPadding(dp(12), dp(8), dp(12), dp(8));
+                if (dropdown) {
+                    tv.setBackgroundColor(UI_SURFACE);
+                }
+                return tv;
+            }
+
+            @Override
+            public View getView(int position, View convertView, ViewGroup parent) {
+                return styleView(super.getView(position, convertView, parent), false);
+            }
+
+            @Override
+            public View getDropDownView(int position, View convertView, ViewGroup parent) {
+                return styleView(super.getDropDownView(position, convertView, parent), true);
+            }
+        };
+        adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        spinner.setAdapter(adapter);
+        spinner.setMinimumWidth(dp(160));
+        spinner.setMinimumHeight(dp(42));
+        spinner.setPopupBackgroundDrawable(roundedStrokeDrawable(
+                UI_SURFACE, dp(10), UI_BORDER, dp(1)));
+        spinner.setBackground(rippleDrawable(
+                UI_SURFACE_ALT, dp(10), UI_BORDER, dp(1)));
+        return spinner;
+    }
+
+    private FclToggle fclSwitch(String label) {
+        return new FclToggle(getContext(), label);
+    }
+
+    private FclToggle fclSelectionSwitch(String label) {
+        return new FclToggle(getContext(), label, "选中", "未选");
     }
 
     private Button ghostButton(String text) {
         Button b = new Button(getContext());
-        b.setText(text);
-        b.setTextSize(14);
-        b.setAllCaps(false);
-        b.setMinWidth(0);
-        b.setMinHeight(0);
-        b.setPadding(dp(10), dp(4), dp(10), dp(4));
-        b.setTextColor(0xFF2196F3);
-        b.setBackground(roundedDrawable(0x00000000, dp(8)));
+        prepareButton(b, text);
+        b.setTextColor(UI_ACCENT);
+        b.setBackground(rippleDrawable(
+                UI_SURFACE, dp(11), UI_BORDER, dp(1)));
         return b;
+    }
+
+    private Button dangerButton(String text) {
+        Button b = new Button(getContext());
+        prepareButton(b, text);
+        b.setTextColor(UI_DANGER);
+        b.setBackground(rippleDrawable(
+                UI_DANGER_SOFT, dp(11), 0x33D83A52, dp(1)));
+        return b;
+    }
+
+    private LinearLayout createEditorCard(String title, String subtitle) {
+        LinearLayout root = new LinearLayout(getContext());
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setPadding(dp(20), dp(18), dp(20), dp(14));
+        root.setBackground(roundedDrawable(UI_SURFACE_ALT, dp(22)));
+        root.setClipToOutline(true);
+        root.setElevation(dp(14));
+
+        TextView titleView = new TextView(getContext());
+        titleView.setText(title);
+        titleView.setTextSize(20);
+        titleView.setTypeface(null, Typeface.BOLD);
+        titleView.setTextColor(UI_TEXT);
+        root.addView(titleView);
+
+        TextView subtitleView = new TextView(getContext());
+        subtitleView.setText(subtitle);
+        subtitleView.setTextSize(12);
+        subtitleView.setTextColor(UI_TEXT_MUTED);
+        subtitleView.setPadding(0, dp(3), 0, dp(12));
+        root.addView(subtitleView);
+        root.addView(divider());
+        return root;
+    }
+
+    /**
+     * Put the editor card in a full-window transparent host.  Centering the
+     * card inside real window bounds is reliable in fullscreen/freeform modes,
+     * unlike assigning physical display x/y coordinates to a floating dialog.
+     */
+    private Dialog createEditorDialog(View card) {
+        return createEditorDialog(card, true);
+    }
+
+    private Dialog createEditorDialog(View card, boolean fillHeight) {
+        Dialog dialog = new Dialog(getContext(), R.style.AnlandEditorDialog);
+        FrameLayout host = new FrameLayout(getContext());
+        host.setClipChildren(false);
+        host.setPadding(dp(18), dp(26), dp(18), dp(26));
+
+        int availableWidth = Math.max(1,
+                getResources().getDisplayMetrics().widthPixels - dp(36));
+        int cardWidth = Math.min(dp(520), availableWidth);
+        FrameLayout.LayoutParams cardParams = new FrameLayout.LayoutParams(
+                cardWidth, fillHeight ? FrameLayout.LayoutParams.MATCH_PARENT
+                : FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER);
+        host.addView(card, cardParams);
+        host.addOnLayoutChangeListener((v, left, top, right, bottom,
+                                        oldLeft, oldTop, oldRight, oldBottom) -> {
+            int actualWidth = Math.max(1, right - left
+                    - host.getPaddingLeft() - host.getPaddingRight());
+            int targetWidth = Math.min(dp(520), actualWidth);
+            ViewGroup.LayoutParams params = card.getLayoutParams();
+            if (params.width != targetWidth) {
+                params.width = targetWidth;
+                card.setLayoutParams(params);
+            }
+        });
+        dialog.setContentView(host, new ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        dialog.setCanceledOnTouchOutside(false);
+        dialog.setOnShowListener(d -> {
+            Window window = dialog.getWindow();
+            if (window == null) {
+                return;
+            }
+            window.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
+            window.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
+            window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
+            WindowManager.LayoutParams attrs = window.getAttributes();
+            attrs.width = WindowManager.LayoutParams.MATCH_PARENT;
+            attrs.height = WindowManager.LayoutParams.MATCH_PARENT;
+            attrs.gravity = Gravity.CENTER;
+            attrs.x = 0;
+            attrs.y = 0;
+            attrs.dimAmount = 0.55f;
+            window.setAttributes(attrs);
+            window.getDecorView().setPadding(0, 0, 0, 0);
+            if (getContext() instanceof android.app.Activity) {
+                View sourceDecor = ((android.app.Activity) getContext())
+                        .getWindow().getDecorView();
+                window.getDecorView().setSystemUiVisibility(
+                        sourceDecor.getSystemUiVisibility());
+            }
+        });
+        return dialog;
+    }
+
+    /** Visible, dependency-free replacement for the legacy platform Switch. */
+    private final class FclToggle extends LinearLayout implements Checkable {
+        private final String label;
+        private final String checkedText;
+        private final String uncheckedText;
+        private final TextView status;
+        private final ToggleIndicator indicator;
+        private boolean checked;
+        private Runnable checkedChangeListener;
+
+        FclToggle(Context context, String label) {
+            this(context, label, "开启", "关闭");
+        }
+
+        FclToggle(Context context, String label,
+                  String checkedText, String uncheckedText) {
+            super(context);
+            this.label = label;
+            this.checkedText = checkedText;
+            this.uncheckedText = uncheckedText;
+            setOrientation(HORIZONTAL);
+            setGravity(Gravity.CENTER_VERTICAL);
+            setMinimumHeight(dp(40));
+            setPadding(dp(4), 0, dp(2), 0);
+            setClickable(true);
+            setFocusable(true);
+
+            status = new TextView(context);
+            status.setTextSize(13);
+            status.setGravity(Gravity.CENTER);
+            status.setMinWidth(dp(38));
+            LinearLayout.LayoutParams statusParams = new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT);
+            statusParams.setMarginEnd(dp(8));
+            addView(status, statusParams);
+
+            indicator = new ToggleIndicator(context);
+            addView(indicator, new LinearLayout.LayoutParams(dp(48), dp(30)));
+            setOnClickListener(v -> toggle());
+            updateVisuals();
+        }
+
+        @Override
+        public void setChecked(boolean checked) {
+            if (this.checked == checked) {
+                updateVisuals();
+                return;
+            }
+            this.checked = checked;
+            updateVisuals();
+            refreshDrawableState();
+            if (checkedChangeListener != null) {
+                checkedChangeListener.run();
+            }
+        }
+
+        @Override
+        public boolean isChecked() {
+            return checked;
+        }
+
+        @Override
+        public void toggle() {
+            setChecked(!checked);
+        }
+
+        void setOnCheckedChangeListener(Runnable listener) {
+            checkedChangeListener = listener;
+        }
+
+        private void updateVisuals() {
+            status.setText(checked ? checkedText : uncheckedText);
+            status.setTextColor(checked ? UI_ACCENT : UI_TEXT_MUTED);
+            status.setTypeface(null, checked ? Typeface.BOLD : Typeface.NORMAL);
+            indicator.setChecked(checked);
+            setContentDescription(label + "，" + (checked ? checkedText : uncheckedText));
+            setStateDescription(checked ? checkedText : uncheckedText);
+        }
+    }
+
+    /** The track has an explicit size, so it cannot collapse to 0 px. */
+    private final class ToggleIndicator extends View {
+        private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private boolean checked;
+
+        ToggleIndicator(Context context) {
+            super(context);
+            setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_NO);
+        }
+
+        void setChecked(boolean checked) {
+            this.checked = checked;
+            invalidate();
+        }
+
+        @Override
+        protected void onDraw(Canvas canvas) {
+            super.onDraw(canvas);
+            float trackHeight = dp(24);
+            float left = dp(2);
+            float right = getWidth() - dp(2);
+            float top = (getHeight() - trackHeight) / 2f;
+            float bottom = top + trackHeight;
+            float radius = trackHeight / 2f;
+            paint.setColor(checked ? UI_ACCENT : 0xFFCBD2DE);
+            canvas.drawRoundRect(left, top, right, bottom, radius, radius, paint);
+
+            float thumbRadius = dp(10);
+            float cx = checked ? right - radius : left + radius;
+            float cy = getHeight() / 2f;
+            paint.setColor(Color.WHITE);
+            canvas.drawCircle(cx, cy, thumbRadius, paint);
+        }
     }
 
     private JSONObject groupJsonForControl(String controlId) {
@@ -764,28 +1145,108 @@ public class FclControllerView extends FrameLayout {
 
         private void openKeycodePicker(final List<Integer> codes, final Runnable after) {
             final int n = KEYCODE_ENTRIES.length;
-            String[] labels = new String[n];
-            boolean[] checked = new boolean[n];
+            final List<Integer> workingCodes = new ArrayList<>(codes);
+            LinearLayout root = createEditorCard(
+                    "选择键码", "支持多选；取消不会改动原来的键位");
+
+            EditText searchInput = fclEditText("名称或数字键码");
+            searchInput.setInputType(InputType.TYPE_CLASS_TEXT);
+            LinearLayout searchRow = formRow(formLabel("搜索"), searchInput);
+            LinearLayout.LayoutParams searchParams = new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT);
+            searchParams.setMargins(0, dp(12), 0, dp(8));
+            searchRow.setLayoutParams(searchParams);
+            root.addView(searchRow);
+
+            TextView selectedText = sectionHeader("");
+            root.addView(selectedText);
+
+            ScrollView listScroll = new ScrollView(getContext());
+            listScroll.setFillViewport(true);
+            listScroll.setScrollBarStyle(View.SCROLLBARS_INSIDE_OVERLAY);
+            LinearLayout list = new LinearLayout(getContext());
+            list.setOrientation(LinearLayout.VERTICAL);
+            list.setPadding(dp(1), 0, dp(3), dp(8));
+            listScroll.addView(list);
+            root.addView(listScroll, new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f));
+
+            final View[] rows = new View[n];
+            final String[] searchTokens = new String[n];
+            Runnable updateCount = () -> selectedText.setText(
+                    "已选择 " + workingCodes.size() + " 项");
             for (int i = 0; i < n; i++) {
-                int code = (Integer) KEYCODE_ENTRIES[i][0];
-                labels[i] = KEYCODE_ENTRIES[i][1] + " (" + code + ")";
-                checked[i] = codes.contains(code);
-            }
-            AlertDialog dialog = new AlertDialog.Builder(getContext())
-                    .setTitle("选择键码")
-                    .setMultiChoiceItems(labels, checked, (d, which, isChecked) -> {
-                        int code = (Integer) KEYCODE_ENTRIES[which][0];
-                        if (isChecked) {
-                            if (!codes.contains(code)) {
-                                codes.add(code);
-                            }
-                        } else {
-                            codes.remove((Integer) code);
+                final int code = (Integer) KEYCODE_ENTRIES[i][0];
+                String name = (String) KEYCODE_ENTRIES[i][1];
+                FclToggle toggle = fclSelectionSwitch(name);
+                toggle.setChecked(workingCodes.contains(code));
+                toggle.setOnCheckedChangeListener(() -> {
+                    if (toggle.isChecked()) {
+                        if (!workingCodes.contains(code)) {
+                            workingCodes.add(code);
                         }
-                    })
-                    .setPositiveButton("确定", (d, w) -> after.run())
-                    .setNegativeButton("取消", null)
-                    .create();
+                    } else {
+                        workingCodes.remove((Integer) code);
+                    }
+                    updateCount.run();
+                });
+                LinearLayout row = formRow(
+                        formLabel(name + "  ·  " + code), toggle);
+                rows[i] = row;
+                searchTokens[i] = (name + " " + code)
+                        .toLowerCase(java.util.Locale.ROOT);
+                list.addView(row);
+            }
+            updateCount.run();
+
+            searchInput.addTextChangedListener(new android.text.TextWatcher() {
+                @Override
+                public void beforeTextChanged(CharSequence s, int start, int count, int after) {
+                }
+
+                @Override
+                public void onTextChanged(CharSequence s, int start, int before, int count) {
+                }
+
+                @Override
+                public void afterTextChanged(android.text.Editable editable) {
+                    String query = editable.toString().trim()
+                            .toLowerCase(java.util.Locale.ROOT);
+                    for (int i = 0; i < rows.length; i++) {
+                        rows[i].setVisibility(query.isEmpty()
+                                || searchTokens[i].contains(query) ? VISIBLE : GONE);
+                    }
+                    listScroll.scrollTo(0, 0);
+                }
+            });
+
+            LinearLayout bottom = new LinearLayout(getContext());
+            bottom.setOrientation(LinearLayout.HORIZONTAL);
+            bottom.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
+            bottom.setPadding(0, dp(12), 0, 0);
+            Button cancelBtn = ghostButton("取消");
+            Button saveBtn = accentButton("应用");
+            bottom.addView(cancelBtn);
+            LinearLayout.LayoutParams saveParams = new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT);
+            saveParams.setMarginStart(dp(8));
+            bottom.addView(saveBtn, saveParams);
+            root.addView(divider());
+            root.addView(bottom);
+
+            Dialog dialog = createEditorDialog(root);
+            cancelBtn.setOnClickListener(v -> dialog.dismiss());
+            saveBtn.setOnClickListener(v -> {
+                codes.clear();
+                codes.addAll(workingCodes);
+                after.run();
+                dialog.dismiss();
+            });
+            // Do not force the software keyboard open as soon as the picker appears.
+            root.setFocusableInTouchMode(true);
+            root.requestFocus();
             showOverlayDialog(dialog);
         }
 
@@ -1191,40 +1652,42 @@ public class FclControllerView extends FrameLayout {
                     "切换触摸模式", "切换鼠标模式", "输入", "快捷输入"};
             final String[] flagKeys = {"autoKeep", "autoClick", "openMenu",
                     "switchTouchMode", "switchMouseMode", "input", "quickInput"};
-            final int pad = dp(12);
 
-            LinearLayout root = new LinearLayout(getContext());
-            root.setOrientation(LinearLayout.VERTICAL);
-            root.setPadding(pad, pad, pad, pad);
-            root.setBackground(roundedDrawable(0xFFF5F5F5, dp(16)));
-
-            TextView titleView = new TextView(getContext());
-            titleView.setText("编辑按键" + (data.text == null || data.text.isEmpty()
-                    ? "" : " · " + data.text));
-            titleView.setTextSize(17);
-            titleView.setTypeface(null, Typeface.BOLD);
-            titleView.setTextColor(0xFF212121);
-            titleView.setPadding(0, 0, 0, dp(8));
-            root.addView(titleView);
-            root.addView(sectionHeader("方向控件设置"));
-            root.addView(divider());
+            String title = "编辑按键" + (data.text == null || data.text.isEmpty()
+                    ? "" : " · " + data.text);
+            LinearLayout root = createEditorCard(
+                    title, "配置按键外观、位置与触发事件");
 
             // ---- FCL-style: left icon rail (信息/事件) + scrollable content ----
             LinearLayout body = new LinearLayout(getContext());
             body.setOrientation(LinearLayout.HORIZONTAL);
+            body.setPadding(0, dp(12), 0, dp(6));
 
             LinearLayout rail = new LinearLayout(getContext());
             rail.setOrientation(LinearLayout.VERTICAL);
-            rail.setPadding(0, dp(4), dp(8), 0);
-            final Button infoTab = railIcon("⚙");
-            final Button eventTab = railIcon("⌨");
+            rail.setGravity(Gravity.TOP | Gravity.CENTER_HORIZONTAL);
+            rail.setPadding(dp(4), dp(5), dp(4), dp(5));
+            rail.setBackground(roundedDrawable(UI_SURFACE, dp(16)));
+            final Button infoTab = railIcon("信息");
+            final Button eventTab = railIcon("事件");
             rail.addView(infoTab);
+            LinearLayout.LayoutParams eventRailParams = new LinearLayout.LayoutParams(
+                    dp(62), dp(46));
+            eventRailParams.topMargin = dp(6);
+            eventTab.setLayoutParams(eventRailParams);
             rail.addView(eventTab);
-            body.addView(rail);
+            setRailSelected(infoTab, true);
+            LinearLayout.LayoutParams railParams = new LinearLayout.LayoutParams(
+                    dp(70), LinearLayout.LayoutParams.MATCH_PARENT);
+            railParams.setMarginEnd(dp(12));
+            body.addView(rail, railParams);
 
             final ScrollView scroll = new ScrollView(getContext());
+            scroll.setFillViewport(true);
+            scroll.setScrollBarStyle(View.SCROLLBARS_INSIDE_OVERLAY);
             LinearLayout content = new LinearLayout(getContext());
             content.setOrientation(LinearLayout.VERTICAL);
+            content.setPadding(dp(1), 0, dp(3), dp(8));
             scroll.addView(content);
             body.addView(scroll, new LinearLayout.LayoutParams(0,
                     LinearLayout.LayoutParams.MATCH_PARENT, 1f));
@@ -1241,7 +1704,7 @@ public class FclControllerView extends FrameLayout {
             textInput.setText(data.text);
             infoPanel.addView(formRow(formLabel("文字"), textInput));
 
-            Switch dragSwitch = fclSwitch("按住拖动移动鼠标");
+            FclToggle dragSwitch = fclSwitch("按住拖动移动鼠标");
             dragSwitch.setChecked(data.dragMoveMouse);
             infoPanel.addView(formRow(formLabel("按住拖动移动鼠标"), dragSwitch));
 
@@ -1257,17 +1720,13 @@ public class FclControllerView extends FrameLayout {
             yInput.setWidth(dp(120));
             infoPanel.addView(formRow(formLabel("Y位置"), yInput));
 
-            Spinner sizeSpinner = new Spinner(getContext());
             String[] sizeNames = {"百分比", "绝对dp"};
-            sizeSpinner.setAdapter(new ArrayAdapter<>(getContext(),
-                    android.R.layout.simple_spinner_dropdown_item, sizeNames));
+            Spinner sizeSpinner = fclSpinner(java.util.Arrays.asList(sizeNames));
             sizeSpinner.setSelection("ABSOLUTE".equals(data.baseInfo.sizeType) ? 1 : 0);
             infoPanel.addView(formRow(formLabel("尺寸类型"), sizeSpinner));
 
-            Spinner refSpinner = new Spinner(getContext());
             String[] refNames = {"参照屏宽", "参照屏高"};
-            refSpinner.setAdapter(new ArrayAdapter<>(getContext(),
-                    android.R.layout.simple_spinner_dropdown_item, refNames));
+            Spinner refSpinner = fclSpinner(java.util.Arrays.asList(refNames));
             refSpinner.setSelection("SCREEN_WIDTH"
                     .equals(data.baseInfo.percentageWidth.reference) ? 0 : 1);
             infoPanel.addView(formRow(formLabel("参照"), refSpinner));
@@ -1281,13 +1740,11 @@ public class FclControllerView extends FrameLayout {
             sizeInput.setWidth(dp(120));
             infoPanel.addView(formRow(formLabel("大小"), sizeInput));
 
-            Spinner styleSpinner = new Spinner(getContext());
             List<String> styleNames = new ArrayList<>(controller.buttonStylesByName.keySet());
             if (styleNames.isEmpty()) {
                 styleNames.add("Default");
             }
-            styleSpinner.setAdapter(new ArrayAdapter<>(getContext(),
-                    android.R.layout.simple_spinner_dropdown_item, styleNames));
+            Spinner styleSpinner = fclSpinner(styleNames);
             int styleIdx = styleNames.indexOf(btn.optString("style", "Default"));
             styleSpinner.setSelection(styleIdx < 0 ? 0 : styleIdx);
             infoPanel.addView(formRow(formLabel("样式"), styleSpinner));
@@ -1298,11 +1755,11 @@ public class FclControllerView extends FrameLayout {
             eventPanel.addView(sectionHeader("事件"));
             eventPanel.addView(divider());
 
-            Switch pointerSwitch = fclSwitch("指针跟随 (pointerFollow)");
+            FclToggle pointerSwitch = fclSwitch("指针跟随");
             pointerSwitch.setChecked(data.pointerFollow);
             eventPanel.addView(formRow(formLabel("指针跟随"), pointerSwitch));
 
-            Switch movableSwitch = fclSwitch("可移动 (Movable)");
+            FclToggle movableSwitch = fclSwitch("可移动");
             movableSwitch.setChecked(data.movable);
             eventPanel.addView(formRow(formLabel("可移动"), movableSwitch));
 
@@ -1328,20 +1785,30 @@ public class FclControllerView extends FrameLayout {
 
             LinearLayout eventTabBar = new LinearLayout(getContext());
             eventTabBar.setOrientation(LinearLayout.HORIZONTAL);
-            eventTabBar.setPadding(0, dp(4), 0, dp(4));
+            eventTabBar.setPadding(dp(4), dp(4), dp(4), dp(4));
+            eventTabBar.setBackground(roundedDrawable(UI_SURFACE, dp(14)));
             final Button[] eventTabButtons = new Button[4];
             for (int i = 0; i < 4; i++) {
                 eventTabButtons[i] = tabButton(eventTabs[i], i == 0);
-                eventTabBar.addView(eventTabButtons[i]);
+                LinearLayout.LayoutParams tabParams = new LinearLayout.LayoutParams(
+                        0, dp(42), 1f);
+                if (i < 3) {
+                    tabParams.setMarginEnd(dp(4));
+                }
+                eventTabBar.addView(eventTabButtons[i], tabParams);
             }
-            eventPanel.addView(eventTabBar);
+            LinearLayout.LayoutParams tabBarParams = new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT);
+            tabBarParams.setMargins(0, dp(4), 0, dp(10));
+            eventPanel.addView(eventTabBar, tabBarParams);
 
             final LinearLayout eventBody = new LinearLayout(getContext());
             eventBody.setOrientation(LinearLayout.VERTICAL);
             eventPanel.addView(eventBody);
 
             final View[] eventBodies = new View[4];
-            final Switch[][] evSwitches = new Switch[4][7];
+            final FclToggle[][] evSwitches = new FclToggle[4][7];
             final EditText[] evTextInputs = new EditText[4];
             final Button[] evCodeButtons = new Button[4];
             for (int i = 0; i < 4; i++) {
@@ -1356,10 +1823,14 @@ public class FclControllerView extends FrameLayout {
                 evTextInputs[i] = fclEditText("输出文本");
                 evTextInputs[i].setText(evText[i]);
                 bodyPanel.addView(formRow(formLabel("输出文本"), evTextInputs[i]));
-                evCodeButtons[i] = ghostButton("键码: " + joinCodes(evCodes.get(i)));
+                evCodeButtons[i] = ghostButton(joinCodes(evCodes.get(i)) + "  ›");
+                evCodeButtons[i].setSingleLine(true);
+                evCodeButtons[i].setEllipsize(android.text.TextUtils.TruncateAt.END);
+                evCodeButtons[i].setMaxWidth(dp(210));
                 evCodeButtons[i].setOnClickListener(v -> openKeycodePicker(
                         evCodes.get(fi),
-                        () -> evCodeButtons[fi].setText("键码: " + joinCodes(evCodes.get(fi)))));
+                        () -> evCodeButtons[fi].setText(
+                                joinCodes(evCodes.get(fi)) + "  ›")));
                 bodyPanel.addView(formRow(formLabel("键码"), evCodeButtons[i]));
                 eventBodies[i] = bodyPanel;
             }
@@ -1370,9 +1841,7 @@ public class FclControllerView extends FrameLayout {
                     eventBody.removeAllViews();
                     eventBody.addView(eventBodies[fi]);
                     for (int k = 0; k < 4; k++) {
-                        eventTabButtons[k].setBackground(roundedDrawable(
-                                k == fi ? 0xFF2196F3 : 0x22000000, dp(10)));
-                        eventTabButtons[k].setTextColor(k == fi ? 0xFFFFFFFF : 0xFF2196F3);
+                        setTabSelected(eventTabButtons[k], k == fi);
                     }
                 });
             }
@@ -1383,63 +1852,46 @@ public class FclControllerView extends FrameLayout {
             infoTab.setOnClickListener(v -> {
                 infoPanel.setVisibility(VISIBLE);
                 eventPanel.setVisibility(GONE);
-                infoTab.setBackground(roundedDrawable(0xFF2196F3, dp(10)));
-                infoTab.setTextColor(0xFFFFFFFF);
-                eventTab.setBackground(roundedDrawable(0x00000000, dp(10)));
-                eventTab.setTextColor(0xFF2196F3);
+                setRailSelected(infoTab, true);
+                setRailSelected(eventTab, false);
+                scroll.scrollTo(0, 0);
             });
             eventTab.setOnClickListener(v -> {
                 infoPanel.setVisibility(GONE);
                 eventPanel.setVisibility(VISIBLE);
-                eventTab.setBackground(roundedDrawable(0xFF2196F3, dp(10)));
-                eventTab.setTextColor(0xFFFFFFFF);
-                infoTab.setBackground(roundedDrawable(0x00000000, dp(10)));
-                infoTab.setTextColor(0xFF2196F3);
+                setRailSelected(eventTab, true);
+                setRailSelected(infoTab, false);
+                scroll.scrollTo(0, 0);
             });
 
             // ---- bottom actions: FCL layout 克隆/删除 left, 取消/确定 right ----
             LinearLayout bottom = new LinearLayout(getContext());
             bottom.setOrientation(LinearLayout.HORIZONTAL);
             bottom.setGravity(Gravity.CENTER_VERTICAL);
-            bottom.setPadding(0, dp(8), 0, 0);
+            bottom.setPadding(0, dp(12), 0, 0);
             Button cloneBtn = ghostButton("克隆");
-            Button delBtn = ghostButton("删除");
+            Button delBtn = dangerButton("删除");
             Button cancelBtn = ghostButton("取消");
-            Button okBtn = ghostButton("确定");
+            Button okBtn = accentButton("保存");
             bottom.addView(cloneBtn);
-            bottom.addView(delBtn);
+            LinearLayout.LayoutParams deleteParams = new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT);
+            deleteParams.setMarginStart(dp(8));
+            bottom.addView(delBtn, deleteParams);
             View spacer = new View(getContext());
             spacer.setLayoutParams(new LinearLayout.LayoutParams(0, 0, 1f));
             bottom.addView(spacer);
             bottom.addView(cancelBtn);
-            bottom.addView(okBtn);
+            LinearLayout.LayoutParams saveParams = new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT);
+            saveParams.setMarginStart(dp(8));
+            bottom.addView(okBtn, saveParams);
+            root.addView(divider());
             root.addView(bottom);
 
-            android.app.Dialog dialog = new android.app.Dialog(getContext());
-            int screenW = getResources().getDisplayMetrics().widthPixels;
-            int screenH = getResources().getDisplayMetrics().heightPixels;
-            int dialogW = Math.min(dp(500), screenW - dp(24));
-            int dialogH = (int) (screenH * 0.88f);
-            dialog.setContentView(root, new android.view.ViewGroup.LayoutParams(
-                    dialogW, dialogH));
-            if (dialog.getWindow() != null) {
-                dialog.getWindow().setBackgroundDrawable(
-                        new android.graphics.drawable.ColorDrawable(0));
-                dialog.getWindow().setGravity(Gravity.CENTER);
-                dialog.getWindow().setLayout(dialogW, dialogH);
-            }
-            dialog.setOnShowListener(d -> {
-                if (dialog.getWindow() != null) {
-                    android.view.WindowManager.LayoutParams attrs =
-                            dialog.getWindow().getAttributes();
-                    attrs.gravity = Gravity.TOP | Gravity.START;
-                    attrs.x = (screenW - dialogW) / 2;
-                    attrs.y = (screenH - dialogH) / 2;
-                    attrs.width = dialogW;
-                    attrs.height = dialogH;
-                    dialog.getWindow().setAttributes(attrs);
-                }
-            });
+            Dialog dialog = createEditorDialog(root);
             okBtn.setOnClickListener(v -> {
                 for (int i = 0; i < 4; i++) {
                     evText[i] = evTextInputs[i].getText().toString();
@@ -1948,75 +2400,93 @@ public class FclControllerView extends FrameLayout {
             if (dir == null) {
                 return;
             }
-            final int pad = dp(12);
-            LinearLayout root = new LinearLayout(getContext());
-            root.setOrientation(LinearLayout.VERTICAL);
-            root.setPadding(pad, pad, pad, pad);
-            root.setBackground(roundedDrawable(0xFFF5F5F5, dp(16)));
+            LinearLayout root = createEditorCard(
+                    "编辑方向控件", "配置位置、摇杆行为与方向键位");
 
-            TextView titleView = new TextView(getContext());
-            titleView.setText("编辑方向控件");
-            titleView.setTextSize(17);
-            titleView.setTypeface(null, Typeface.BOLD);
-            titleView.setTextColor(0xFF212121);
-            titleView.setPadding(0, 0, 0, dp(8));
-            root.addView(titleView);
+            LinearLayout body = new LinearLayout(getContext());
+            body.setOrientation(LinearLayout.HORIZONTAL);
+            body.setPadding(0, dp(12), 0, dp(6));
 
-            EditText xInput = new EditText(getContext());
-            xInput.setHint("X位置（千分比 0-1000）");
+            LinearLayout rail = new LinearLayout(getContext());
+            rail.setOrientation(LinearLayout.VERTICAL);
+            rail.setGravity(Gravity.TOP | Gravity.CENTER_HORIZONTAL);
+            rail.setPadding(dp(4), dp(5), dp(4), dp(5));
+            rail.setBackground(roundedDrawable(UI_SURFACE, dp(16)));
+            final Button infoTab = railIcon("信息");
+            final Button keyTab = railIcon("键位");
+            rail.addView(infoTab);
+            LinearLayout.LayoutParams keyRailParams = new LinearLayout.LayoutParams(
+                    dp(62), dp(46));
+            keyRailParams.topMargin = dp(6);
+            keyTab.setLayoutParams(keyRailParams);
+            rail.addView(keyTab);
+            setRailSelected(infoTab, true);
+            LinearLayout.LayoutParams railParams = new LinearLayout.LayoutParams(
+                    dp(70), LinearLayout.LayoutParams.MATCH_PARENT);
+            railParams.setMarginEnd(dp(12));
+            body.addView(rail, railParams);
+
+            final ScrollView scroll = new ScrollView(getContext());
+            scroll.setFillViewport(true);
+            scroll.setScrollBarStyle(View.SCROLLBARS_INSIDE_OVERLAY);
+            LinearLayout content = new LinearLayout(getContext());
+            content.setOrientation(LinearLayout.VERTICAL);
+            content.setPadding(dp(1), 0, dp(3), dp(8));
+            scroll.addView(content);
+            body.addView(scroll, new LinearLayout.LayoutParams(
+                    0, LinearLayout.LayoutParams.MATCH_PARENT, 1f));
+            root.addView(body, new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f));
+
+            LinearLayout infoPanel = new LinearLayout(getContext());
+            infoPanel.setOrientation(LinearLayout.VERTICAL);
+            infoPanel.addView(sectionHeader("位置与外观"));
+            infoPanel.addView(divider());
+
+            EditText xInput = fclEditText("0-1000");
             xInput.setInputType(InputType.TYPE_CLASS_NUMBER);
             xInput.setText(String.valueOf(data.baseInfo.xPosition));
-            root.addView(xInput);
+            infoPanel.addView(formRow(formLabel("X 位置"), xInput));
 
-            EditText yInput = new EditText(getContext());
-            yInput.setHint("Y位置（千分比 0-1000）");
+            EditText yInput = fclEditText("0-1000");
             yInput.setInputType(InputType.TYPE_CLASS_NUMBER);
             yInput.setText(String.valueOf(data.baseInfo.yPosition));
-            root.addView(yInput);
+            infoPanel.addView(formRow(formLabel("Y 位置"), yInput));
 
-            Spinner sizeSpinner = new Spinner(getContext());
             String[] sizeNames = {"百分比", "绝对dp"};
-            sizeSpinner.setAdapter(new ArrayAdapter<>(getContext(),
-                    android.R.layout.simple_spinner_dropdown_item, sizeNames));
+            Spinner sizeSpinner = fclSpinner(java.util.Arrays.asList(sizeNames));
             sizeSpinner.setSelection("ABSOLUTE".equals(data.baseInfo.sizeType) ? 1 : 0);
-            root.addView(sizeSpinner);
+            infoPanel.addView(formRow(formLabel("尺寸类型"), sizeSpinner));
 
-            Spinner refSpinner = new Spinner(getContext());
             String[] refNames = {"参照屏宽", "参照屏高"};
-            refSpinner.setAdapter(new ArrayAdapter<>(getContext(),
-                    android.R.layout.simple_spinner_dropdown_item, refNames));
+            Spinner refSpinner = fclSpinner(java.util.Arrays.asList(refNames));
             refSpinner.setSelection("SCREEN_WIDTH"
                     .equals(data.baseInfo.percentageWidth.reference) ? 0 : 1);
-            root.addView(refSpinner);
+            infoPanel.addView(formRow(formLabel("尺寸参照"), refSpinner));
 
-            EditText sizeInput = new EditText(getContext());
-            sizeInput.setHint("尺寸（百分比 0-1000 或 dp）");
+            EditText sizeInput = fclEditText("0-1000 或 dp");
             sizeInput.setInputType(InputType.TYPE_CLASS_NUMBER);
             int sizeVal = "ABSOLUTE".equals(data.baseInfo.sizeType)
                     ? data.baseInfo.absoluteWidth
                     : data.baseInfo.percentageWidth.size;
             sizeInput.setText(String.valueOf(sizeVal));
-            root.addView(sizeInput);
+            infoPanel.addView(formRow(formLabel("尺寸"), sizeInput));
 
-            Spinner styleSpinner = new Spinner(getContext());
             List<String> styleNames = new ArrayList<>(controller.directionStylesByName.keySet());
             if (styleNames.isEmpty()) {
                 styleNames.add("Default");
             }
-            styleSpinner.setAdapter(new ArrayAdapter<>(getContext(),
-                    android.R.layout.simple_spinner_dropdown_item, styleNames));
+            Spinner styleSpinner = fclSpinner(styleNames);
             int styleIdx = styleNames.indexOf(dir.optString("style", "Default"));
             styleSpinner.setSelection(styleIdx < 0 ? 0 : styleIdx);
-            root.addView(styleSpinner);
+            infoPanel.addView(formRow(formLabel("样式"), styleSpinner));
 
-            Spinner followSpinner = new Spinner(getContext());
             String[] followNames = {"固定", "中心跟随", "跟随"};
-            followSpinner.setAdapter(new ArrayAdapter<>(getContext(),
-                    android.R.layout.simple_spinner_dropdown_item, followNames));
+            Spinner followSpinner = fclSpinner(java.util.Arrays.asList(followNames));
             String follow = data.followOption;
             followSpinner.setSelection("FIXED".equals(follow) ? 0
                     : ("CENTER_FOLLOW".equals(follow) ? 1 : 2));
-            root.addView(followSpinner);
+            infoPanel.addView(formRow(formLabel("跟随方式"), followSpinner));
 
             final List<Integer> upCodes = new ArrayList<>();
             final List<Integer> downCodes = new ArrayList<>();
@@ -2029,80 +2499,95 @@ public class FclControllerView extends FrameLayout {
             addAll(rightCodes, data.rightKeycodes);
             sneakCodes.add(data.sneakKeycode);
 
-            Button upBtn = new Button(getContext());
-            upBtn.setText("上键码: " + joinCodes(upCodes));
+            LinearLayout keyPanel = new LinearLayout(getContext());
+            keyPanel.setOrientation(LinearLayout.VERTICAL);
+            keyPanel.addView(sectionHeader("方向键位"));
+            keyPanel.addView(divider());
+
+            Button upBtn = ghostButton(joinCodes(upCodes) + "  ›");
+            upBtn.setSingleLine(true);
+            upBtn.setMaxWidth(dp(210));
             upBtn.setOnClickListener(v -> openKeycodePicker(upCodes,
-                    () -> upBtn.setText("上键码: " + joinCodes(upCodes))));
-            root.addView(upBtn);
+                    () -> upBtn.setText(joinCodes(upCodes) + "  ›")));
+            keyPanel.addView(formRow(formLabel("向上"), upBtn));
 
-            Button downBtn = new Button(getContext());
-            downBtn.setText("下键码: " + joinCodes(downCodes));
+            Button downBtn = ghostButton(joinCodes(downCodes) + "  ›");
+            downBtn.setSingleLine(true);
+            downBtn.setMaxWidth(dp(210));
             downBtn.setOnClickListener(v -> openKeycodePicker(downCodes,
-                    () -> downBtn.setText("下键码: " + joinCodes(downCodes))));
-            root.addView(downBtn);
+                    () -> downBtn.setText(joinCodes(downCodes) + "  ›")));
+            keyPanel.addView(formRow(formLabel("向下"), downBtn));
 
-            Button leftBtn = new Button(getContext());
-            leftBtn.setText("左键码: " + joinCodes(leftCodes));
+            Button leftBtn = ghostButton(joinCodes(leftCodes) + "  ›");
+            leftBtn.setSingleLine(true);
+            leftBtn.setMaxWidth(dp(210));
             leftBtn.setOnClickListener(v -> openKeycodePicker(leftCodes,
-                    () -> leftBtn.setText("左键码: " + joinCodes(leftCodes))));
-            root.addView(leftBtn);
+                    () -> leftBtn.setText(joinCodes(leftCodes) + "  ›")));
+            keyPanel.addView(formRow(formLabel("向左"), leftBtn));
 
-            Button rightBtn = new Button(getContext());
-            rightBtn.setText("右键码: " + joinCodes(rightCodes));
+            Button rightBtn = ghostButton(joinCodes(rightCodes) + "  ›");
+            rightBtn.setSingleLine(true);
+            rightBtn.setMaxWidth(dp(210));
             rightBtn.setOnClickListener(v -> openKeycodePicker(rightCodes,
-                    () -> rightBtn.setText("右键码: " + joinCodes(rightCodes))));
-            root.addView(rightBtn);
+                    () -> rightBtn.setText(joinCodes(rightCodes) + "  ›")));
+            keyPanel.addView(formRow(formLabel("向右"), rightBtn));
 
-            Switch sneakSwitch = new Switch(getContext());
-            sneakSwitch.setText("双击潜行");
+            FclToggle sneakSwitch = fclSwitch("双击潜行");
             sneakSwitch.setChecked(data.sneak);
-            root.addView(sneakSwitch);
+            keyPanel.addView(formRow(formLabel("双击潜行"), sneakSwitch));
 
-            Button sneakKeyBtn = new Button(getContext());
-            sneakKeyBtn.setText("潜行键码: " + joinCodes(sneakCodes));
+            Button sneakKeyBtn = ghostButton(joinCodes(sneakCodes) + "  ›");
+            sneakKeyBtn.setSingleLine(true);
+            sneakKeyBtn.setMaxWidth(dp(210));
             sneakKeyBtn.setOnClickListener(v -> openKeycodePicker(sneakCodes,
-                    () -> sneakKeyBtn.setText("潜行键码: " + joinCodes(sneakCodes))));
-            root.addView(sneakKeyBtn);
+                    () -> sneakKeyBtn.setText(joinCodes(sneakCodes) + "  ›")));
+            keyPanel.addView(formRow(formLabel("潜行键码"), sneakKeyBtn));
+
+            content.addView(infoPanel);
+            content.addView(keyPanel);
+            keyPanel.setVisibility(GONE);
+            infoTab.setOnClickListener(v -> {
+                infoPanel.setVisibility(VISIBLE);
+                keyPanel.setVisibility(GONE);
+                setRailSelected(infoTab, true);
+                setRailSelected(keyTab, false);
+                scroll.scrollTo(0, 0);
+            });
+            keyTab.setOnClickListener(v -> {
+                infoPanel.setVisibility(GONE);
+                keyPanel.setVisibility(VISIBLE);
+                setRailSelected(keyTab, true);
+                setRailSelected(infoTab, false);
+                scroll.scrollTo(0, 0);
+            });
 
             LinearLayout bottom = new LinearLayout(getContext());
             bottom.setOrientation(LinearLayout.HORIZONTAL);
-            Button okBtn = ghostButton("确定");
-            Button cancelBtn = ghostButton("取消");
+            bottom.setGravity(Gravity.CENTER_VERTICAL);
+            bottom.setPadding(0, dp(12), 0, 0);
             Button cloneBtn = ghostButton("克隆");
-            Button delBtn = ghostButton("删除");
-            bottom.addView(okBtn);
-            bottom.addView(cancelBtn);
+            Button delBtn = dangerButton("删除");
+            Button cancelBtn = ghostButton("取消");
+            Button okBtn = accentButton("保存");
             bottom.addView(cloneBtn);
-            bottom.addView(delBtn);
+            LinearLayout.LayoutParams deleteParams = new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT);
+            deleteParams.setMarginStart(dp(8));
+            bottom.addView(delBtn, deleteParams);
+            View spacer = new View(getContext());
+            spacer.setLayoutParams(new LinearLayout.LayoutParams(0, 0, 1f));
+            bottom.addView(spacer);
+            bottom.addView(cancelBtn);
+            LinearLayout.LayoutParams saveParams = new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT);
+            saveParams.setMarginStart(dp(8));
+            bottom.addView(okBtn, saveParams);
+            root.addView(divider());
             root.addView(bottom);
 
-            ScrollView scroll = new ScrollView(getContext());
-            scroll.addView(root);
-            android.app.Dialog dialog = new android.app.Dialog(getContext());
-            int screenW = getResources().getDisplayMetrics().widthPixels;
-            int screenH = getResources().getDisplayMetrics().heightPixels;
-            int dialogW = Math.min(dp(500), screenW - dp(24));
-            int dialogH = (int) (screenH * 0.88f);
-            dialog.setContentView(scroll, new android.view.ViewGroup.LayoutParams(
-                    dialogW, dialogH));
-            if (dialog.getWindow() != null) {
-                dialog.getWindow().setBackgroundDrawable(
-                        new android.graphics.drawable.ColorDrawable(0));
-                dialog.getWindow().setGravity(Gravity.CENTER);
-                dialog.getWindow().setLayout(dialogW, dialogH);
-            }
-            dialog.setOnShowListener(d -> {
-                if (dialog.getWindow() != null) {
-                    android.view.WindowManager.LayoutParams attrs =
-                            dialog.getWindow().getAttributes();
-                    attrs.gravity = Gravity.TOP | Gravity.START;
-                    attrs.x = (screenW - dialogW) / 2;
-                    attrs.y = (screenH - dialogH) / 2;
-                    attrs.width = dialogW;
-                    attrs.height = dialogH;
-                    dialog.getWindow().setAttributes(attrs);
-                }
-            });
+            Dialog dialog = createEditorDialog(root);
             okBtn.setOnClickListener(v -> {
                 saveDirectionJson(
                         xInput.getText().toString(),
