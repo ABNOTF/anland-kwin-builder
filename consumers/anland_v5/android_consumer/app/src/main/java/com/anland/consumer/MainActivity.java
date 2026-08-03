@@ -111,6 +111,8 @@ public class MainActivity extends Activity
     // copy of the Default controller so both orientations start with the same keys).
     private static final String KEY_FCL_CONTROLLER_PORTRAIT = "fcl_controller_id_portrait";
     private static final String DEFAULT_FCL_CONTROLLER_PORTRAIT = "00000001";
+    // One-shot request from Settings: open the overlay straight into edit mode.
+    private static final String KEY_FCL_EDIT_REQUESTED = "fcl_edit_requested";
     // Which bottom overlay is active: the original extra-keys bar or the FCL
     // controller. Mutually exclusive (二选一).
     private static final String KEY_BOTTOM_MODE = "bottom_overlay_mode";
@@ -1768,6 +1770,14 @@ public class MainActivity extends Activity
 
         // FCL controller overlay: pick up the Settings switch/controller changes.
         applyFclPrefs();
+        // Settings' 编辑 button asks us to start editing the controller right away.
+        SharedPreferences fclPrefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+        if (fclPrefs.getBoolean(KEY_FCL_EDIT_REQUESTED, false)) {
+            fclPrefs.edit().remove(KEY_FCL_EDIT_REQUESTED).apply();
+            if (fclControllerView != null) {
+                fclControllerView.setEditMode(true);
+            }
+        }
 
         // The socket pref may have been edited in Settings; keep our dedup key current.
         registerWindow();

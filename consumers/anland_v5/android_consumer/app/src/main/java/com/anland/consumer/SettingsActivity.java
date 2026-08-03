@@ -1,5 +1,6 @@
 package com.anland.consumer;
 
+import android.app.AlertDialog;
 import android.app.Activity;
 import android.content.Intent;
 import android.content.SharedPreferences;
@@ -71,7 +72,10 @@ public class SettingsActivity extends Activity {
     private static final String KEY_KEYBOARD_FLOATING = "keyboard_floating";
     // FCL controller overlay (FCL-Controllers JSON files bundled in assets).
     private static final String KEY_FCL_CONTROLLER = "fcl_controller_id";
-    private static final String[] BUNDLED_CONTROLLER_IDS = {"00000000", "899a1e2b"};
+    private static final String KEY_FCL_CONTROLLER_PORTRAIT = "fcl_controller_id_portrait";
+    private static final String DEFAULT_FCL_CONTROLLER_PORTRAIT = "00000001";
+    private static final String KEY_FCL_EDIT_REQUESTED = "fcl_edit_requested";
+    private static final String[] BUNDLED_CONTROLLER_IDS = {"00000000", "00000001", "899a1e2b"};
     // Bottom overlay mode: original extra-keys bar vs FCL controller (二选一).
     private static final String KEY_BOTTOM_MODE = "bottom_overlay_mode";
     private static final String[] BOTTOM_MODES = {"extra_keys", "fcl"};
@@ -424,6 +428,7 @@ public class SettingsActivity extends Activity {
 
         TextView label = new TextView(this);
         label.setText(R.string.fcl_controller_label);
+        label.setText("横屏控制器");
         label.setTextSize(14);
         label.setPadding(0, dp(16), 0, dp(4));
         root.addView(label);
@@ -452,6 +457,61 @@ public class SettingsActivity extends Activity {
             public void onNothingSelected(AdapterView<?> parent) {}
         });
         root.addView(spinner);
+
+        // === 竖屏控制器 profile ===
+        TextView portraitLabel = new TextView(this);
+        portraitLabel.setText("竖屏控制器");
+        portraitLabel.setTextSize(14);
+        portraitLabel.setPadding(0, dp(16), 0, dp(4));
+        root.addView(portraitLabel);
+
+        Spinner portraitSpinner = new Spinner(this);
+        portraitSpinner.setAdapter(new ArrayAdapter<>(this,
+            android.R.layout.simple_spinner_dropdown_item, names));
+        String currentPortrait = prefs.getString(KEY_FCL_CONTROLLER_PORTRAIT,
+                DEFAULT_FCL_CONTROLLER_PORTRAIT);
+        int pIdx = 0;
+        for (int i = 0; i < controllerIds.size(); i++) {
+            if (controllerIds.get(i).equals(currentPortrait)) { pIdx = i; break; }
+        }
+        portraitSpinner.setSelection(pIdx);
+        portraitSpinner.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+            @Override
+            public void onItemSelected(AdapterView<?> parent, View v, int pos, long id) {
+                getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
+                    .putString(KEY_FCL_CONTROLLER_PORTRAIT, controllerIds.get(pos)).apply();
+            }
+            @Override
+            public void onNothingSelected(AdapterView<?> parent) {}
+        });
+        root.addView(portraitSpinner);
+
+        // === Controller management: 编辑 / 新增 / 删除 ===
+        LinearLayout manageButtons = new LinearLayout(this);
+        manageButtons.setOrientation(LinearLayout.HORIZONTAL);
+        manageButtons.setPadding(0, dp(8), 0, 0);
+
+        Button editBtn = new Button(this);
+        editBtn.setText("编辑");
+        editBtn.setOnClickListener(v -> {
+            // Ask MainActivity to open the overlay straight into edit mode.
+            getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
+                .putBoolean(KEY_FCL_EDIT_REQUESTED, true).apply();
+            finish();
+        });
+        manageButtons.addView(editBtn);
+
+        Button addBtn = new Button(this);
+        addBtn.setText("新增");
+        addBtn.setOnClickListener(v -> promptAddController());
+        manageButtons.addView(addBtn);
+
+        Button deleteBtn = new Button(this);
+        deleteBtn.setText("删除");
+        deleteBtn.setOnClickListener(v -> promptDeleteController());
+        manageButtons.addView(deleteBtn);
+
+        root.addView(manageButtons);
 
         // === Import / export / reset actions ===
         LinearLayout fclButtons = new LinearLayout(this);
@@ -503,6 +563,75 @@ public class SettingsActivity extends Activity {
     }
 
     // ============================================================
+    private boolean isPortrait() {
+        return getResources().getConfiguration().orientation
+                == android.content.res.Configuration.ORIENTATION_PORTRAIT;
+    }
+
+    private String currentOrientationKey() {
+        return isPortrait() ? KEY_FCL_CONTROLLER_PORTRAIT : KEY_FCL_CONTROLLER;
+    }
+
+    private String currentOrientationDefault() {
+        return isPortrait() ? DEFAULT_FCL_CONTROLLER_PORTRAIT : BUNDLED_CONTROLLER_IDS[0];
+    }
+
+    private String currentControllerId() {
+        return getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+                .getString(currentOrientationKey(), currentOrientationDefault());
+    }
+
+    private void promptAddController() {
+        EditText nameInput = new EditText(this);
+        nameInput.setHint("控制器名称");
+        LinearLayout wrap = new LinearLayout(this);
+        wrap.setPadding(dp(24), dp(8), dp(24), 0);
+        wrap.addView(nameInput);
+        new AlertDialog.Builder(this)
+                .setTitle("新增控制器")
+                .setView(wrap)
+                .setPositiveButton("创建", (d, w) -> {
+                    FclController src = FclController.load(this, currentControllerId());
+                    if (src == null) {
+                        Toast.makeText(this, "加载失败", Toast.LENGTH_SHORT).show();
+                        return;
+                    }
+                    String newId = FclController.createCopy(this, src,
+                            nameInput.getText().toString());
+                    if (newId != null) {
+                        getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
+                                .putString(currentOrientationKey(), newId).apply();
+                        Toast.makeText(this, "已创建并切换", Toast.LENGTH_SHORT).show();
+                    } else {
+                        Toast.makeText(this, "创建失败", Toast.LENGTH_SHORT).show();
+                    }
+                })
+                .setNegativeButton("取消", null)
+                .show();
+    }
+
+    private void promptDeleteController() {
+        String id = currentControllerId();
+        FclController ctrl = FclController.load(this, id);
+        String name = ctrl != null ? ctrl.name : id;
+        new AlertDialog.Builder(this)
+                .setTitle("删除控制器")
+                .setMessage("删除 “" + name + "”？")
+                .setPositiveButton("删除", (d, w) -> {
+                    if (ctrl != null && ctrl.isBundled(this)) {
+                        Toast.makeText(this, "内置控制器不能删除", Toast.LENGTH_SHORT).show();
+                    } else {
+                        FclController.deleteFromDisk(this, id);
+                        getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
+                                .putString(currentOrientationKey(), currentOrientationDefault())
+                                .apply();
+                        Toast.makeText(this, "已删除，恢复默认", Toast.LENGTH_SHORT).show();
+                    }
+                })
+                .setNegativeButton("取消", null)
+                .show();
+    }
+
     // FCL controller import / export
     // ============================================================
 

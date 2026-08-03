@@ -605,8 +605,15 @@ public class FclControllerView extends FrameLayout {
             View child = getChildAt(i);
             int cw = childWidth(child, w, h);
             int ch = childHeight(child, w, h);
-            child.measure(MeasureSpec.makeMeasureSpec(cw, MeasureSpec.EXACTLY),
-                    MeasureSpec.makeMeasureSpec(ch, MeasureSpec.EXACTLY));
+            if (cw <= 0 || ch <= 0) {
+                // Non-control children (the management toolbar) measure
+                // themselves from their own layout params / content.
+                child.measure(MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED),
+                        MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED));
+            } else {
+                child.measure(MeasureSpec.makeMeasureSpec(cw, MeasureSpec.EXACTLY),
+                        MeasureSpec.makeMeasureSpec(ch, MeasureSpec.EXACTLY));
+            }
         }
         setMeasuredDimension(w, h);
     }
