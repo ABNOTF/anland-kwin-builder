@@ -216,12 +216,6 @@ public class FclControllerView extends FrameLayout {
     private final float density;
     private final List<View> controls = new ArrayList<>();
     private final Map<String, Boolean> groupVisible = new HashMap<>();
-    // Controller management toolbar (编辑 / 新增 / 删除), rebuilt with the controls.
-    private Button editButton;
-    private Button addButton;
-    private Button deleteButton;
-    private Button addKeyButton;
-
     private FclController controller;
     private Bridge bridge;
     private float mouseSensitivity = 1f;
@@ -278,12 +272,6 @@ public class FclControllerView extends FrameLayout {
         this.editMode = editMode;
         if (!editMode) {
             pendingPositions.clear();
-        }
-        if (editButton != null) {
-            editButton.setText(editMode ? "完成" : "编辑");
-        }
-        if (addKeyButton != null) {
-            addKeyButton.setVisibility(editMode ? VISIBLE : GONE);
         }
         invalidate();
     }
@@ -384,144 +372,8 @@ public class FclControllerView extends FrameLayout {
                 controls.add(view);
             }
         }
-        buildToolbar();
         requestLayout();
         postInvalidate();
-    }
-
-    /** Top-right management toolbar: 编辑 / 新增 / 删除. */
-    private void buildToolbar() {
-        removeToolbarIfAttached();
-        editButton = new Button(getContext());
-        addButton = new Button(getContext());
-        deleteButton = new Button(getContext());
-        addKeyButton = new Button(getContext());
-        editButton.setText(editMode ? "完成" : "编辑");
-        addButton.setText("新增");
-        deleteButton.setText("删除");
-        addKeyButton.setText("加键");
-        addKeyButton.setVisibility(editMode ? VISIBLE : GONE);
-        for (Button b : new Button[]{editButton, addButton, deleteButton, addKeyButton}) {
-            b.setTextSize(11);
-            b.setAllCaps(false);
-            b.setPadding(dp(8), dp(2), dp(8), dp(2));
-            b.setBackgroundColor(0x99000000);
-            b.setTextColor(0xFFFFFFFF);
-            addView(b, new FrameLayout.LayoutParams(
-                    FrameLayout.LayoutParams.WRAP_CONTENT,
-                    FrameLayout.LayoutParams.WRAP_CONTENT,
-                    Gravity.TOP | Gravity.START));
-        }
-        // Chain the three buttons along the top edge once they are measured.
-        post(() -> {
-            if (deleteButton == null || deleteButton.getMeasuredWidth() <= 0) {
-                return;
-            }
-            int gap = dp(4);
-            int right = getWidth() - dp(8);
-            int x = right - deleteButton.getMeasuredWidth();
-            deleteButton.setX(x);
-            x -= deleteButton.getMeasuredWidth() + gap;
-            addButton.setX(x);
-            x -= addButton.getMeasuredWidth() + gap;
-            editButton.setX(x);
-            x -= editButton.getMeasuredWidth() + gap;
-            addKeyButton.setX(x);
-            int y = dp(8);
-            deleteButton.setY(y);
-            addButton.setY(y);
-            editButton.setY(y);
-            addKeyButton.setY(y);
-        });
-        editButton.setOnClickListener(v -> {
-            if (editMode) {
-                promptExitEditMode();
-            } else {
-                setEditMode(true);
-            }
-        });
-        addButton.setOnClickListener(v -> promptAddController());
-        deleteButton.setOnClickListener(v -> promptDeleteController());
-        addKeyButton.setOnClickListener(v -> addNewKey());
-    }
-
-    private void removeToolbarIfAttached() {
-        if (editButton != null && editButton.getParent() == this) {
-            removeView(editButton);
-        }
-        if (addButton != null && addButton.getParent() == this) {
-            removeView(addButton);
-        }
-        if (deleteButton != null && deleteButton.getParent() == this) {
-            removeView(deleteButton);
-        }
-        if (addKeyButton != null && addKeyButton.getParent() == this) {
-            removeView(addKeyButton);
-        }
-    }
-
-    /** FCL-style "add key": append a fresh button to the first visible group. */
-    private void addNewKey() {
-        if (controller == null) {
-            return;
-        }
-        try {
-            JSONObject group = controller.firstEditableGroupJson();
-            if (group == null) {
-                Toast.makeText(getContext(), "没有可编辑的视图组", Toast.LENGTH_SHORT).show();
-                return;
-            }
-            JSONObject vd = group.optJSONObject("viewData");
-            if (vd == null) {
-                vd = new JSONObject();
-                group.put("viewData", vd);
-            }
-            JSONArray bl = vd.optJSONArray("buttonList");
-            if (bl == null) {
-                bl = new JSONArray();
-                vd.put("buttonList", bl);
-            }
-            JSONObject btn = FclController.newButtonJson("新按键");
-            bl.put(btn);
-            if (!controller.saveToFile(getContext())) {
-                Toast.makeText(getContext(), "保存失败", Toast.LENGTH_SHORT).show();
-                return;
-            }
-            final String newId = btn.optString("id", "");
-            reloadController();
-            // Open the new key's editor right away.
-            post(() -> {
-                for (View v : controls) {
-                    if (v instanceof FclButtonView
-                            && newId.equals(((FclButtonView) v).data.id)) {
-                        ((FclButtonView) v).openPropertyDialog();
-                        break;
-                    }
-                }
-            });
-        } catch (JSONException e) {
-            Toast.makeText(getContext(), "新增失败: " + e.getMessage(),
-                    Toast.LENGTH_SHORT).show();
-        }
-    }
-
-    private JSONObject groupJsonForControl(String controlId) {
-        if (controller == null) {
-            return null;
-        }
-        for (FclController.ViewGroup g : controller.viewGroups) {
-            for (FclController.Button b : g.buttons) {
-                if (b.id.equals(controlId)) {
-                    return controller.findGroupJson(g.id);
-                }
-            }
-            for (FclController.Direction d : g.directions) {
-                if (d.id.equals(controlId)) {
-                    return controller.findGroupJson(g.id);
-                }
-            }
-        }
-        return null;
     }
 
     /** Save pending drag positions and per-key edits into the controller file. */
@@ -566,49 +418,6 @@ public class FclControllerView extends FrameLayout {
                 .setPositiveButton("保存", (d, w) -> saveEdit())
                 .setNegativeButton("不保存", (d, w) -> discardPositions())
                 .setNeutralButton("取消", null)
-                .show();
-    }
-
-    private void promptAddController() {
-        EditText nameInput = new EditText(getContext());
-        nameInput.setHint("控制器名称");
-        LinearLayout wrap = new LinearLayout(getContext());
-        wrap.setPadding(dp(24), dp(8), dp(24), 0);
-        wrap.addView(nameInput);
-        new AlertDialog.Builder(getContext())
-                .setTitle("新增控制器")
-                .setView(wrap)
-                .setPositiveButton("创建", (d, w) -> {
-                    String newId = FclController.createCopy(getContext(), controller,
-                            nameInput.getText().toString());
-                    if (newId != null) {
-                        bridge.selectController(newId);
-                        Toast.makeText(getContext(), "已创建控制器", Toast.LENGTH_SHORT).show();
-                    } else {
-                        Toast.makeText(getContext(), "创建失败", Toast.LENGTH_SHORT).show();
-                    }
-                })
-                .setNegativeButton("取消", null)
-                .show();
-    }
-
-    private void promptDeleteController() {
-        if (controller == null) {
-            return;
-        }
-        new AlertDialog.Builder(getContext())
-                .setTitle("删除控制器")
-                .setMessage("删除 “" + controller.name + "”？")
-                .setPositiveButton("删除", (d, w) -> {
-                    if (controller.isBundled(getContext())) {
-                        Toast.makeText(getContext(), "内置控制器不能删除",
-                                Toast.LENGTH_SHORT).show();
-                    } else {
-                        FclController.deleteFromDisk(getContext(), controller.id);
-                        bridge.selectController(null);
-                    }
-                })
-                .setNegativeButton("取消", null)
                 .show();
     }
 
@@ -829,6 +638,108 @@ public class FclControllerView extends FrameLayout {
         b.setTextColor(selected ? 0xFFFFFFFF : 0xFF2196F3);
         b.setBackground(roundedDrawable(selected ? 0xFF2196F3 : 0x22000000, dp(10)));
         return b;
+    }
+
+    /** FCL-style rail icon button (⚙ / ⌨), 44dp, tinted when selected. */
+    private Button railIcon(String glyph) {
+        Button b = new Button(getContext());
+        b.setText(glyph);
+        b.setTextSize(18);
+        b.setAllCaps(false);
+        b.setMinWidth(0);
+        b.setMinHeight(0);
+        b.setPadding(dp(8), dp(8), dp(8), dp(8));
+        b.setTextColor(0xFF2196F3);
+        b.setBackground(roundedDrawable(0x00000000, dp(10)));
+        return b;
+    }
+
+    private TextView sectionHeader(String text) {
+        TextView tv = new TextView(getContext());
+        tv.setText(text);
+        tv.setTextSize(11);
+        tv.setTextColor(0xFF757575);
+        tv.setPadding(0, dp(6), 0, dp(2));
+        return tv;
+    }
+
+    private View divider() {
+        View v = new View(getContext());
+        v.setBackgroundColor(0xFFBDBDBD);
+        v.setLayoutParams(new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, 1));
+        return v;
+    }
+
+    private TextView formLabel(String text) {
+        TextView tv = new TextView(getContext());
+        tv.setText(text);
+        tv.setTextSize(14);
+        tv.setTextColor(0xFF424242);
+        tv.setSingleLine(true);
+        return tv;
+    }
+
+    /** Label on the left, control on the right (FCL form-row style). */
+    private LinearLayout formRow(View label, View control) {
+        LinearLayout row = new LinearLayout(getContext());
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(0, dp(3), 0, dp(3));
+        row.addView(label);
+        View spacer = new View(getContext());
+        spacer.setLayoutParams(new LinearLayout.LayoutParams(0, 0, 1f));
+        row.addView(spacer);
+        row.addView(control);
+        return row;
+    }
+
+    private EditText fclEditText(String hint) {
+        EditText et = new EditText(getContext());
+        et.setHint(hint);
+        et.setTextSize(14);
+        et.setSingleLine(true);
+        return et;
+    }
+
+    private Switch fclSwitch(String text) {
+        Switch s = new Switch(getContext());
+        s.setText(text);
+        s.setTextSize(14);
+        s.setTextColor(0xFF424242);
+        return s;
+    }
+
+    private Button ghostButton(String text) {
+        Button b = new Button(getContext());
+        b.setText(text);
+        b.setTextSize(14);
+        b.setAllCaps(false);
+        b.setMinWidth(0);
+        b.setMinHeight(0);
+        b.setPadding(dp(10), dp(4), dp(10), dp(4));
+        b.setTextColor(0xFF2196F3);
+        b.setBackground(roundedDrawable(0x00000000, dp(8)));
+        return b;
+    }
+
+    private JSONObject groupJsonForControl(String controlId) {
+        if (controller == null) {
+            return null;
+        }
+        for (FclController.ViewGroup g : controller.viewGroups) {
+            for (FclController.Button b : g.buttons) {
+                if (b.id.equals(controlId)) {
+                    return controller.findGroupJson(g.id);
+                }
+            }
+            for (FclController.Direction d : g.directions) {
+                if (d.id.equals(controlId)) {
+                    return controller.findGroupJson(g.id);
+                }
+            }
+        }
+        return null;
     }
 
         private void openKeycodePicker(final List<Integer> codes, final Runnable after) {
@@ -1274,49 +1185,62 @@ public class FclControllerView extends FrameLayout {
             titleView.setTextColor(0xFF212121);
             titleView.setPadding(0, 0, 0, dp(8));
             root.addView(titleView);
+            root.addView(sectionHeader("方向控件设置"));
+            root.addView(divider());
 
-            // ---- 信息 / 事件 tabs ----
-            LinearLayout tabBar = new LinearLayout(getContext());
-            tabBar.setOrientation(LinearLayout.HORIZONTAL);
-            final Button infoTab = tabButton("信息", true);
-            final Button eventTab = tabButton("事件", false);
-            tabBar.addView(infoTab);
-            tabBar.addView(eventTab);
-            root.addView(tabBar);
+            // ---- FCL-style: left icon rail (信息/事件) + scrollable content ----
+            LinearLayout body = new LinearLayout(getContext());
+            body.setOrientation(LinearLayout.HORIZONTAL);
+
+            LinearLayout rail = new LinearLayout(getContext());
+            rail.setOrientation(LinearLayout.VERTICAL);
+            rail.setPadding(0, dp(4), dp(8), 0);
+            final Button infoTab = railIcon("⚙");
+            final Button eventTab = railIcon("⌨");
+            rail.addView(infoTab);
+            rail.addView(eventTab);
+            body.addView(rail);
+
+            final ScrollView scroll = new ScrollView(getContext());
+            LinearLayout content = new LinearLayout(getContext());
+            content.setOrientation(LinearLayout.VERTICAL);
+            scroll.addView(content);
+            body.addView(scroll, new LinearLayout.LayoutParams(0,
+                    LinearLayout.LayoutParams.MATCH_PARENT, 1f));
+            root.addView(body);
 
             // ---- info panel ----
             LinearLayout infoPanel = new LinearLayout(getContext());
             infoPanel.setOrientation(LinearLayout.VERTICAL);
+            infoPanel.addView(sectionHeader("信息"));
+            infoPanel.addView(divider());
 
-            EditText textInput = new EditText(getContext());
-            textInput.setHint("按键文字");
+            EditText textInput = fclEditText("按键文字");
             textInput.setText(data.text);
-            infoPanel.addView(textInput);
+            infoPanel.addView(formRow(formLabel("文字"), textInput));
 
-            // Anland extension, prominent: hold this key and drag to move the mouse.
-            Switch dragSwitch = new Switch(getContext());
-            dragSwitch.setText("按住拖动移动鼠标");
+            Switch dragSwitch = fclSwitch("按住拖动移动鼠标");
             dragSwitch.setChecked(data.dragMoveMouse);
-            infoPanel.addView(dragSwitch);
+            infoPanel.addView(formRow(formLabel("拖动鼠标"), dragSwitch));
 
-            EditText xInput = new EditText(getContext());
-            xInput.setHint("X位置（千分比 0-1000）");
+            EditText xInput = fclEditText("0-1000");
             xInput.setInputType(InputType.TYPE_CLASS_NUMBER);
             xInput.setText(String.valueOf(data.baseInfo.xPosition));
-            infoPanel.addView(xInput);
+            xInput.setWidth(dp(120));
+            infoPanel.addView(formRow(formLabel("X位置"), xInput));
 
-            EditText yInput = new EditText(getContext());
-            yInput.setHint("Y位置（千分比 0-1000）");
+            EditText yInput = fclEditText("0-1000");
             yInput.setInputType(InputType.TYPE_CLASS_NUMBER);
             yInput.setText(String.valueOf(data.baseInfo.yPosition));
-            infoPanel.addView(yInput);
+            yInput.setWidth(dp(120));
+            infoPanel.addView(formRow(formLabel("Y位置"), yInput));
 
             Spinner sizeSpinner = new Spinner(getContext());
             String[] sizeNames = {"百分比", "绝对dp"};
             sizeSpinner.setAdapter(new ArrayAdapter<>(getContext(),
                     android.R.layout.simple_spinner_dropdown_item, sizeNames));
             sizeSpinner.setSelection("ABSOLUTE".equals(data.baseInfo.sizeType) ? 1 : 0);
-            infoPanel.addView(sizeSpinner);
+            infoPanel.addView(formRow(formLabel("尺寸类型"), sizeSpinner));
 
             Spinner refSpinner = new Spinner(getContext());
             String[] refNames = {"参照屏宽", "参照屏高"};
@@ -1324,16 +1248,16 @@ public class FclControllerView extends FrameLayout {
                     android.R.layout.simple_spinner_dropdown_item, refNames));
             refSpinner.setSelection("SCREEN_WIDTH"
                     .equals(data.baseInfo.percentageWidth.reference) ? 0 : 1);
-            infoPanel.addView(refSpinner);
+            infoPanel.addView(formRow(formLabel("参照"), refSpinner));
 
-            EditText sizeInput = new EditText(getContext());
-            sizeInput.setHint("宽（百分比 0-1000 或 dp）");
+            EditText sizeInput = fclEditText("0-1000 或 dp");
             sizeInput.setInputType(InputType.TYPE_CLASS_NUMBER);
             int sizeVal = "ABSOLUTE".equals(data.baseInfo.sizeType)
                     ? data.baseInfo.absoluteWidth
                     : data.baseInfo.percentageWidth.size;
             sizeInput.setText(String.valueOf(sizeVal));
-            infoPanel.addView(sizeInput);
+            sizeInput.setWidth(dp(120));
+            infoPanel.addView(formRow(formLabel("大小"), sizeInput));
 
             Spinner styleSpinner = new Spinner(getContext());
             List<String> styleNames = new ArrayList<>(controller.buttonStylesByName.keySet());
@@ -1344,21 +1268,21 @@ public class FclControllerView extends FrameLayout {
                     android.R.layout.simple_spinner_dropdown_item, styleNames));
             int styleIdx = styleNames.indexOf(btn.optString("style", "Default"));
             styleSpinner.setSelection(styleIdx < 0 ? 0 : styleIdx);
-            infoPanel.addView(styleSpinner);
+            infoPanel.addView(formRow(formLabel("样式"), styleSpinner));
 
             // ---- event panel ----
             LinearLayout eventPanel = new LinearLayout(getContext());
             eventPanel.setOrientation(LinearLayout.VERTICAL);
+            eventPanel.addView(sectionHeader("事件"));
+            eventPanel.addView(divider());
 
-            Switch pointerSwitch = new Switch(getContext());
-            pointerSwitch.setText("指针跟随 (pointerFollow)");
+            Switch pointerSwitch = fclSwitch("指针跟随 (pointerFollow)");
             pointerSwitch.setChecked(data.pointerFollow);
-            eventPanel.addView(pointerSwitch);
+            eventPanel.addView(formRow(formLabel("指针跟随"), pointerSwitch));
 
-            Switch movableSwitch = new Switch(getContext());
-            movableSwitch.setText("可移动 (Movable)");
+            Switch movableSwitch = fclSwitch("可移动 (Movable)");
             movableSwitch.setChecked(data.movable);
-            eventPanel.addView(movableSwitch);
+            eventPanel.addView(formRow(formLabel("可移动"), movableSwitch));
 
             final List<List<Integer>> evCodes = new ArrayList<>();
             final String[] evText = new String[4];
@@ -1382,10 +1306,10 @@ public class FclControllerView extends FrameLayout {
 
             LinearLayout eventTabBar = new LinearLayout(getContext());
             eventTabBar.setOrientation(LinearLayout.HORIZONTAL);
+            eventTabBar.setPadding(0, dp(4), 0, dp(4));
             final Button[] eventTabButtons = new Button[4];
             for (int i = 0; i < 4; i++) {
-                eventTabButtons[i] = new Button(getContext());
-                eventTabButtons[i].setText(eventTabs[i]);
+                eventTabButtons[i] = tabButton(eventTabs[i], i == 0);
                 eventTabBar.addView(eventTabButtons[i]);
             }
             eventPanel.addView(eventTabBar);
@@ -1400,25 +1324,22 @@ public class FclControllerView extends FrameLayout {
             final Button[] evCodeButtons = new Button[4];
             for (int i = 0; i < 4; i++) {
                 final int fi = i;
-                LinearLayout body = new LinearLayout(getContext());
-                body.setOrientation(LinearLayout.VERTICAL);
+                LinearLayout bodyPanel = new LinearLayout(getContext());
+                bodyPanel.setOrientation(LinearLayout.VERTICAL);
                 for (int f = 0; f < 7; f++) {
-                    evSwitches[i][f] = new Switch(getContext());
-                    evSwitches[i][f].setText(flagNames[f]);
+                    evSwitches[i][f] = fclSwitch(flagNames[f]);
                     evSwitches[i][f].setChecked(evFlags[i][f]);
-                    body.addView(evSwitches[i][f]);
+                    bodyPanel.addView(formRow(formLabel(flagNames[f]), evSwitches[i][f]));
                 }
-                evTextInputs[i] = new EditText(getContext());
-                evTextInputs[i].setHint("输出文本");
+                evTextInputs[i] = fclEditText("输出文本");
                 evTextInputs[i].setText(evText[i]);
-                body.addView(evTextInputs[i]);
-                evCodeButtons[i] = new Button(getContext());
-                evCodeButtons[i].setText("键码: " + joinCodes(evCodes.get(i)));
+                bodyPanel.addView(formRow(formLabel("输出文本"), evTextInputs[i]));
+                evCodeButtons[i] = ghostButton("键码: " + joinCodes(evCodes.get(i)));
                 evCodeButtons[i].setOnClickListener(v -> openKeycodePicker(
                         evCodes.get(fi),
                         () -> evCodeButtons[fi].setText("键码: " + joinCodes(evCodes.get(fi)))));
-                body.addView(evCodeButtons[i]);
-                eventBodies[i] = body;
+                bodyPanel.addView(formRow(formLabel("键码"), evCodeButtons[i]));
+                eventBodies[i] = bodyPanel;
             }
             eventBody.addView(eventBodies[0]);
             for (int i = 0; i < 4; i++) {
@@ -1426,18 +1347,23 @@ public class FclControllerView extends FrameLayout {
                 eventTabButtons[i].setOnClickListener(v -> {
                     eventBody.removeAllViews();
                     eventBody.addView(eventBodies[fi]);
+                    for (int k = 0; k < 4; k++) {
+                        eventTabButtons[k].setBackground(roundedDrawable(
+                                k == fi ? 0xFF2196F3 : 0x22000000, dp(10)));
+                        eventTabButtons[k].setTextColor(k == fi ? 0xFFFFFFFF : 0xFF2196F3);
+                    }
                 });
             }
 
-            root.addView(infoPanel);
-            root.addView(eventPanel);
+            content.addView(infoPanel);
+            content.addView(eventPanel);
             eventPanel.setVisibility(GONE);
             infoTab.setOnClickListener(v -> {
                 infoPanel.setVisibility(VISIBLE);
                 eventPanel.setVisibility(GONE);
                 infoTab.setBackground(roundedDrawable(0xFF2196F3, dp(10)));
                 infoTab.setTextColor(0xFFFFFFFF);
-                eventTab.setBackground(roundedDrawable(0x22000000, dp(10)));
+                eventTab.setBackground(roundedDrawable(0x00000000, dp(10)));
                 eventTab.setTextColor(0xFF2196F3);
             });
             eventTab.setOnClickListener(v -> {
@@ -1445,31 +1371,34 @@ public class FclControllerView extends FrameLayout {
                 eventPanel.setVisibility(VISIBLE);
                 eventTab.setBackground(roundedDrawable(0xFF2196F3, dp(10)));
                 eventTab.setTextColor(0xFFFFFFFF);
-                infoTab.setBackground(roundedDrawable(0x22000000, dp(10)));
+                infoTab.setBackground(roundedDrawable(0x00000000, dp(10)));
                 infoTab.setTextColor(0xFF2196F3);
             });
 
-            // ---- bottom actions ----
+            // ---- bottom actions: FCL layout 克隆/删除 left, 取消/确定 right ----
             LinearLayout bottom = new LinearLayout(getContext());
             bottom.setOrientation(LinearLayout.HORIZONTAL);
-            Button okBtn = accentButton("确定");
-            Button cancelBtn = tabButton("取消", false);
-            Button cloneBtn = tabButton("克隆", false);
-            Button delBtn = tabButton("删除", false);
-            bottom.addView(okBtn);
-            bottom.addView(cancelBtn);
+            bottom.setGravity(Gravity.CENTER_VERTICAL);
+            bottom.setPadding(0, dp(8), 0, 0);
+            Button cloneBtn = ghostButton("克隆");
+            Button delBtn = ghostButton("删除");
+            Button cancelBtn = ghostButton("取消");
+            Button okBtn = ghostButton("确定");
             bottom.addView(cloneBtn);
             bottom.addView(delBtn);
+            View spacer = new View(getContext());
+            spacer.setLayoutParams(new LinearLayout.LayoutParams(0, 0, 1f));
+            bottom.addView(spacer);
+            bottom.addView(cancelBtn);
+            bottom.addView(okBtn);
             root.addView(bottom);
 
-            final ScrollView scroll = new ScrollView(getContext());
-            scroll.addView(root);
             android.app.Dialog dialog = new android.app.Dialog(getContext());
             if (dialog.getWindow() != null) {
                 dialog.getWindow().setBackgroundDrawable(
                         new android.graphics.drawable.ColorDrawable(0));
             }
-            dialog.setContentView(scroll);
+            dialog.setContentView(root);
             okBtn.setOnClickListener(v -> {
                 for (int i = 0; i < 4; i++) {
                     evText[i] = evTextInputs[i].getText().toString();
@@ -2096,10 +2025,10 @@ public class FclControllerView extends FrameLayout {
 
             LinearLayout bottom = new LinearLayout(getContext());
             bottom.setOrientation(LinearLayout.HORIZONTAL);
-            Button okBtn = accentButton("确定");
-            Button cancelBtn = tabButton("取消", false);
-            Button cloneBtn = tabButton("克隆", false);
-            Button delBtn = tabButton("删除", false);
+            Button okBtn = ghostButton("确定");
+            Button cancelBtn = ghostButton("取消");
+            Button cloneBtn = ghostButton("克隆");
+            Button delBtn = ghostButton("删除");
             bottom.addView(okBtn);
             bottom.addView(cancelBtn);
             bottom.addView(cloneBtn);
