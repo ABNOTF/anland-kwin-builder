@@ -5,6 +5,8 @@ import android.content.Context;
 import android.graphics.Canvas;
 import android.graphics.Paint;
 import android.graphics.RectF;
+import android.graphics.Typeface;
+import android.graphics.drawable.GradientDrawable;
 import android.content.SharedPreferences;
 import android.os.Handler;
 import android.os.Looper;
@@ -22,6 +24,7 @@ import android.widget.ScrollView;
 import android.widget.Spinner;
 import android.widget.ArrayAdapter;
 import android.widget.Switch;
+import android.widget.TextView;
 import android.widget.Toast;
 
 import org.json.JSONArray;
@@ -696,6 +699,31 @@ public class FclControllerView extends FrameLayout {
         return Math.round(value * density);
     }
 
+    private GradientDrawable roundedDrawable(int color, int radiusPx) {
+        GradientDrawable g = new GradientDrawable();
+        g.setColor(color);
+        g.setCornerRadius(radiusPx);
+        return g;
+    }
+
+    private Button accentButton(String text) {
+        Button b = new Button(getContext());
+        b.setText(text);
+        b.setAllCaps(false);
+        b.setTextColor(0xFFFFFFFF);
+        b.setBackground(roundedDrawable(0xFF2196F3, dp(10)));
+        return b;
+    }
+
+    private Button tabButton(String text, boolean selected) {
+        Button b = new Button(getContext());
+        b.setText(text);
+        b.setAllCaps(false);
+        b.setTextColor(selected ? 0xFFFFFFFF : 0xFF2196F3);
+        b.setBackground(roundedDrawable(selected ? 0xFF2196F3 : 0x22000000, dp(10)));
+        return b;
+    }
+
     @Override
     protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
         int w = MeasureSpec.getSize(widthMeasureSpec);
@@ -1083,14 +1111,22 @@ public class FclControllerView extends FrameLayout {
             LinearLayout root = new LinearLayout(getContext());
             root.setOrientation(LinearLayout.VERTICAL);
             root.setPadding(pad, pad, pad, pad);
+            root.setBackground(roundedDrawable(0xFFF5F5F5, dp(16)));
+
+            TextView titleView = new TextView(getContext());
+            titleView.setText("编辑按键" + (data.text == null || data.text.isEmpty()
+                    ? "" : " · " + data.text));
+            titleView.setTextSize(17);
+            titleView.setTypeface(null, Typeface.BOLD);
+            titleView.setTextColor(0xFF212121);
+            titleView.setPadding(0, 0, 0, dp(8));
+            root.addView(titleView);
 
             // ---- 信息 / 事件 tabs ----
             LinearLayout tabBar = new LinearLayout(getContext());
             tabBar.setOrientation(LinearLayout.HORIZONTAL);
-            Button infoTab = new Button(getContext());
-            infoTab.setText("信息");
-            Button eventTab = new Button(getContext());
-            eventTab.setText("事件");
+            final Button infoTab = tabButton("信息", true);
+            final Button eventTab = tabButton("事件", false);
             tabBar.addView(infoTab);
             tabBar.addView(eventTab);
             root.addView(tabBar);
@@ -1104,16 +1140,11 @@ public class FclControllerView extends FrameLayout {
             textInput.setText(data.text);
             infoPanel.addView(textInput);
 
-            Spinner visSpinner = new Spinner(getContext());
-            String[] visNames = {"始终", "游戏中", "菜单"};
-            visSpinner.setAdapter(new ArrayAdapter<>(getContext(),
-                    android.R.layout.simple_spinner_dropdown_item, visNames));
-            String vis = btn.optJSONObject("baseInfo") != null
-                    ? btn.optJSONObject("baseInfo").optString("visibilityType", "ALWAYS")
-                    : "ALWAYS";
-            visSpinner.setSelection("ALWAYS".equals(vis) ? 0
-                    : ("IN_GAME".equals(vis) ? 1 : 2));
-            infoPanel.addView(visSpinner);
+            // Anland extension, prominent: hold this key and drag to move the mouse.
+            Switch dragSwitch = new Switch(getContext());
+            dragSwitch.setText("按住拖动移动鼠标");
+            dragSwitch.setChecked(data.dragMoveMouse);
+            infoPanel.addView(dragSwitch);
 
             EditText xInput = new EditText(getContext());
             xInput.setHint("X位置（千分比 0-1000）");
@@ -1170,11 +1201,6 @@ public class FclControllerView extends FrameLayout {
             pointerSwitch.setText("指针跟随 (pointerFollow)");
             pointerSwitch.setChecked(data.pointerFollow);
             eventPanel.addView(pointerSwitch);
-
-            Switch dragSwitch = new Switch(getContext());
-            dragSwitch.setText("按住拖动移动鼠标");
-            dragSwitch.setChecked(data.dragMoveMouse);
-            eventPanel.addView(dragSwitch);
 
             Switch movableSwitch = new Switch(getContext());
             movableSwitch.setText("可移动 (Movable)");
@@ -1256,36 +1282,41 @@ public class FclControllerView extends FrameLayout {
             infoTab.setOnClickListener(v -> {
                 infoPanel.setVisibility(VISIBLE);
                 eventPanel.setVisibility(GONE);
+                infoTab.setBackground(roundedDrawable(0xFF2196F3, dp(10)));
+                infoTab.setTextColor(0xFFFFFFFF);
+                eventTab.setBackground(roundedDrawable(0x22000000, dp(10)));
+                eventTab.setTextColor(0xFF2196F3);
             });
             eventTab.setOnClickListener(v -> {
                 infoPanel.setVisibility(GONE);
                 eventPanel.setVisibility(VISIBLE);
+                eventTab.setBackground(roundedDrawable(0xFF2196F3, dp(10)));
+                eventTab.setTextColor(0xFFFFFFFF);
+                infoTab.setBackground(roundedDrawable(0x22000000, dp(10)));
+                infoTab.setTextColor(0xFF2196F3);
             });
 
             // ---- bottom actions ----
             LinearLayout bottom = new LinearLayout(getContext());
             bottom.setOrientation(LinearLayout.HORIZONTAL);
-            Button okBtn = new Button(getContext());
-            okBtn.setText("确定");
-            Button cancelBtn = new Button(getContext());
-            cancelBtn.setText("取消");
-            Button cloneBtn = new Button(getContext());
-            cloneBtn.setText("克隆");
-            Button delBtn = new Button(getContext());
-            delBtn.setText("删除");
+            Button okBtn = accentButton("确定");
+            Button cancelBtn = tabButton("取消", false);
+            Button cloneBtn = tabButton("克隆", false);
+            Button delBtn = tabButton("删除", false);
             bottom.addView(okBtn);
             bottom.addView(cancelBtn);
             bottom.addView(cloneBtn);
             bottom.addView(delBtn);
             root.addView(bottom);
 
-            ScrollView scroll = new ScrollView(getContext());
+            final ScrollView scroll = new ScrollView(getContext());
             scroll.addView(root);
-            AlertDialog dialog = new AlertDialog.Builder(getContext())
-                    .setTitle("编辑按键" + (data.text == null || data.text.isEmpty()
-                            ? "" : " · " + data.text))
-                    .setView(scroll)
-                    .create();
+            android.app.Dialog dialog = new android.app.Dialog(getContext());
+            if (dialog.getWindow() != null) {
+                dialog.getWindow().setBackgroundDrawable(
+                        new android.graphics.drawable.ColorDrawable(0));
+            }
+            dialog.setContentView(scroll);
             okBtn.setOnClickListener(v -> {
                 for (int i = 0; i < 4; i++) {
                     evText[i] = evTextInputs[i].getText().toString();
@@ -1295,7 +1326,6 @@ public class FclControllerView extends FrameLayout {
                 }
                 savePropertyJson(
                         textInput.getText().toString(),
-                        visSpinner.getSelectedItemPosition(),
                         xInput.getText().toString(),
                         yInput.getText().toString(),
                         sizeSpinner.getSelectedItemPosition(),
@@ -1320,7 +1350,7 @@ public class FclControllerView extends FrameLayout {
             dialog.show();
         }
 
-        private void savePropertyJson(String text, int visIdx, String xs, String ys,
+        private void savePropertyJson(String text, String xs, String ys,
                                       int sizeIdx, int refIdx, String sizeVal,
                                       String style, boolean pointerFollow,
                                       boolean dragMove, boolean movable,
@@ -1343,8 +1373,8 @@ public class FclControllerView extends FrameLayout {
                 }
                 btn.put("text", text);
                 btn.put("style", style);
-                base.put("visibilityType", visIdx == 0 ? "ALWAYS"
-                        : (visIdx == 1 ? "IN_GAME" : "MENU"));
+                // Our port has no cursor-mode concept, so controls are always shown.
+                base.put("visibilityType", "ALWAYS");
                 base.put("xPosition", parseIntClamped(xs, 0, 1000, data.baseInfo.xPosition));
                 base.put("yPosition", parseIntClamped(ys, 0, 1000, data.baseInfo.yPosition));
                 boolean abs = sizeIdx == 1;

@@ -113,6 +113,8 @@ public class MainActivity extends Activity
     private static final String DEFAULT_FCL_CONTROLLER_PORTRAIT = "00000001";
     // One-shot request from Settings: open the overlay straight into edit mode.
     private static final String KEY_FCL_EDIT_REQUESTED = "fcl_edit_requested";
+    // Which profile the Settings 编辑 button asked to edit: "landscape"/"portrait".
+    private static final String KEY_FCL_EDIT_TARGET = "fcl_edit_target";
     // Which bottom overlay is active: the original extra-keys bar or the FCL
     // controller. Mutually exclusive (二选一).
     private static final String KEY_BOTTOM_MODE = "bottom_overlay_mode";
@@ -1774,7 +1776,18 @@ public class MainActivity extends Activity
         SharedPreferences fclPrefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
         if (fclPrefs.getBoolean(KEY_FCL_EDIT_REQUESTED, false)) {
             fclPrefs.edit().remove(KEY_FCL_EDIT_REQUESTED).apply();
+            String target = fclPrefs.getString(KEY_FCL_EDIT_TARGET, "landscape");
+            fclPrefs.edit().remove(KEY_FCL_EDIT_TARGET).apply();
+            String editId = "portrait".equals(target)
+                    ? fclPrefs.getString(KEY_FCL_CONTROLLER_PORTRAIT,
+                            DEFAULT_FCL_CONTROLLER_PORTRAIT)
+                    : fclPrefs.getString(KEY_FCL_CONTROLLER, DEFAULT_FCL_CONTROLLER);
             if (fclControllerView != null) {
+                loadFclController(editId);
+                fclControllerView.rebuild();
+                if (isFclBottomMode()) {
+                    showFclOverlayWindow();
+                }
                 fclControllerView.setEditMode(true);
             }
         }

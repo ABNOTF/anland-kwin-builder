@@ -75,6 +75,7 @@ public class SettingsActivity extends Activity {
     private static final String KEY_FCL_CONTROLLER_PORTRAIT = "fcl_controller_id_portrait";
     private static final String DEFAULT_FCL_CONTROLLER_PORTRAIT = "00000001";
     private static final String KEY_FCL_EDIT_REQUESTED = "fcl_edit_requested";
+    private static final String KEY_FCL_EDIT_TARGET = "fcl_edit_target";
     private static final String[] BUNDLED_CONTROLLER_IDS = {"00000000", "00000001", "899a1e2b"};
     // Bottom overlay mode: original extra-keys bar vs FCL controller (二选一).
     private static final String KEY_BOTTOM_MODE = "bottom_overlay_mode";
@@ -88,6 +89,9 @@ public class SettingsActivity extends Activity {
     private static final int UNBOUND = -1;
     private static final int REQ_IMPORT_CONTROLLER = 3001;
     private static final int REQ_EXPORT_CONTROLLER = 3002;
+
+    // Which profile the six FCL action buttons operate on.
+    private String manageTarget = "landscape";   // "landscape" / "portrait"
 
     // ===== 新增：触摸板 Key =====
     private static final String KEY_TOUCHPAD_MODE = "touchpad_mode";
@@ -486,6 +490,28 @@ public class SettingsActivity extends Activity {
         });
         root.addView(portraitSpinner);
 
+        // === 管理目标: the six action buttons below operate on this profile ===
+        TextView targetLabel = new TextView(this);
+        targetLabel.setText("管理目标");
+        targetLabel.setTextSize(14);
+        targetLabel.setPadding(0, dp(16), 0, dp(4));
+        root.addView(targetLabel);
+
+        Spinner targetSpinner = new Spinner(this);
+        String[] targetNames = {"横屏控制器", "竖屏控制器"};
+        targetSpinner.setAdapter(new ArrayAdapter<>(this,
+                android.R.layout.simple_spinner_dropdown_item, targetNames));
+        targetSpinner.setSelection("portrait".equals(manageTarget) ? 1 : 0);
+        targetSpinner.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+            @Override
+            public void onItemSelected(AdapterView<?> parent, View v, int pos, long id) {
+                manageTarget = pos == 0 ? "landscape" : "portrait";
+            }
+            @Override
+            public void onNothingSelected(AdapterView<?> parent) {}
+        });
+        root.addView(targetSpinner);
+
         // === Controller management: 编辑 / 新增 / 删除 ===
         LinearLayout manageButtons = new LinearLayout(this);
         manageButtons.setOrientation(LinearLayout.HORIZONTAL);
@@ -496,7 +522,8 @@ public class SettingsActivity extends Activity {
         editBtn.setOnClickListener(v -> {
             // Ask MainActivity to open the overlay straight into edit mode.
             getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
-                .putBoolean(KEY_FCL_EDIT_REQUESTED, true).apply();
+                .putBoolean(KEY_FCL_EDIT_REQUESTED, true)
+                .putString(KEY_FCL_EDIT_TARGET, manageTarget).apply();
             finish();
         });
         manageButtons.addView(editBtn);
@@ -531,8 +558,7 @@ public class SettingsActivity extends Activity {
         Button exportBtn = new Button(this);
         exportBtn.setText(R.string.fcl_export);
         exportBtn.setOnClickListener(v -> {
-            String cid = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
-                .getString(KEY_FCL_CONTROLLER, BUNDLED_CONTROLLER_IDS[0]);
+            String cid = manageTargetControllerId();
             Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT);
             intent.addCategory(Intent.CATEGORY_OPENABLE);
             intent.setType("application/json");
@@ -544,8 +570,7 @@ public class SettingsActivity extends Activity {
         Button resetLayoutBtn = new Button(this);
         resetLayoutBtn.setText(R.string.fcl_reset_layout);
         resetLayoutBtn.setOnClickListener(v -> {
-            String ctrlId = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
-                .getString(KEY_FCL_CONTROLLER, BUNDLED_CONTROLLER_IDS[0]);
+            String ctrlId = manageTargetControllerId();
             getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
                 .remove("fcl_pos_" + ctrlId).apply();
             Toast.makeText(this, R.string.fcl_reset_done, Toast.LENGTH_SHORT).show();
@@ -563,22 +588,18 @@ public class SettingsActivity extends Activity {
     }
 
     // ============================================================
-    private boolean isPortrait() {
-        return getResources().getConfiguration().orientation
-                == android.content.res.Configuration.ORIENTATION_PORTRAIT;
+    private String manageTargetKey() {
+        return "portrait".equals(manageTarget) ? KEY_FCL_CONTROLLER_PORTRAIT : KEY_FCL_CONTROLLER;
     }
 
-    private String currentOrientationKey() {
-        return isPortrait() ? KEY_FCL_CONTROLLER_PORTRAIT : KEY_FCL_CONTROLLER;
+    private String manageTargetDefault() {
+        return "portrait".equals(manageTarget)
+                ? DEFAULT_FCL_CONTROLLER_PORTRAIT : BUNDLED_CONTROLLER_IDS[0];
     }
 
-    private String currentOrientationDefault() {
-        return isPortrait() ? DEFAULT_FCL_CONTROLLER_PORTRAIT : BUNDLED_CONTROLLER_IDS[0];
-    }
-
-    private String currentControllerId() {
+    private String manageTargetControllerId() {
         return getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
-                .getString(currentOrientationKey(), currentOrientationDefault());
+                .getString(manageTargetKey(), manageTargetDefault());
     }
 
     private void promptAddController() {
@@ -591,7 +612,7 @@ public class SettingsActivity extends Activity {
                 .setTitle("新增控制器")
                 .setView(wrap)
                 .setPositiveButton("创建", (d, w) -> {
-                    FclController src = FclController.load(this, currentControllerId());
+                    FclController src = FclController.load(this, manageTargetControllerId());
                     if (src == null) {
                         Toast.makeText(this, "加载失败", Toast.LENGTH_SHORT).show();
                         return;
@@ -600,7 +621,7 @@ public class SettingsActivity extends Activity {
                             nameInput.getText().toString());
                     if (newId != null) {
                         getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
-                                .putString(currentOrientationKey(), newId).apply();
+                                .putString(manageTargetKey(), newId).apply();
                         Toast.makeText(this, "已创建并切换", Toast.LENGTH_SHORT).show();
                     } else {
                         Toast.makeText(this, "创建失败", Toast.LENGTH_SHORT).show();
@@ -611,7 +632,7 @@ public class SettingsActivity extends Activity {
     }
 
     private void promptDeleteController() {
-        String id = currentControllerId();
+        String id = manageTargetControllerId();
         FclController ctrl = FclController.load(this, id);
         String name = ctrl != null ? ctrl.name : id;
         new AlertDialog.Builder(this)
@@ -623,7 +644,7 @@ public class SettingsActivity extends Activity {
                     } else {
                         FclController.deleteFromDisk(this, id);
                         getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
-                                .putString(currentOrientationKey(), currentOrientationDefault())
+                                .putString(manageTargetKey(), manageTargetDefault())
                                 .apply();
                         Toast.makeText(this, "已删除，恢复默认", Toast.LENGTH_SHORT).show();
                     }
@@ -714,7 +735,7 @@ public class SettingsActivity extends Activity {
                 fos.close();
             }
             getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
-                .putString(KEY_FCL_CONTROLLER, id).apply();
+                .putString(manageTargetKey(), id).apply();
             Toast.makeText(this, R.string.fcl_import_done, Toast.LENGTH_SHORT).show();
             showKeyboardPage();   // refresh the controller list
         } catch (Exception e) {
@@ -725,8 +746,7 @@ public class SettingsActivity extends Activity {
 
     private void exportController(Uri uri) {
         try {
-            String id = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
-                .getString(KEY_FCL_CONTROLLER, BUNDLED_CONTROLLER_IDS[0]);
+            String id = manageTargetControllerId();
             byte[] bytes = readControllerBytes(id);
             java.io.OutputStream os = getContentResolver().openOutputStream(uri);
             if (os != null) {
