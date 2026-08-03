@@ -4,11 +4,15 @@ import android.app.AlertDialog;
 import android.app.Activity;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.content.res.ColorStateList;
 import android.net.Uri;
 import android.graphics.Color;
 import android.graphics.Insets;
 import android.graphics.Rect;
 import android.graphics.Typeface;
+import android.graphics.drawable.Drawable;
+import android.graphics.drawable.GradientDrawable;
+import android.graphics.drawable.RippleDrawable;
 import android.os.Bundle;
 import android.os.CountDownTimer;
 import android.text.Editable;
@@ -51,6 +55,13 @@ import org.json.JSONObject;
 
 public class SettingsActivity extends Activity {
     private static final String TAG = "AnlandSettings";
+    private static final int FCL_ACCENT = 0xFF3478F6;
+    private static final int FCL_ACCENT_SOFT = 0xFFEAF1FF;
+    private static final int FCL_SURFACE = 0xFFF8FAFC;
+    private static final int FCL_BORDER = 0xFFE2E7F0;
+    private static final int FCL_TEXT = 0xFF172033;
+    private static final int FCL_MUTED = 0xFF687386;
+    private static final int FCL_DANGER = 0xFFD83A52;
     private static final String PREFS_NAME = "anland_settings";
     private static final String KEY_BOUND_KEYCODE = "bound_keycode";
     private static final String KEY_SOCKET_PATH = "socket_path";
@@ -367,224 +378,313 @@ public class SettingsActivity extends Activity {
     // ============================================================
     // FCL controller overlay (FoldCraftLauncher keyboard controls)
     // ============================================================
+    private GradientDrawable fclRounded(int color, int radius, int strokeColor, int strokeWidth) {
+        GradientDrawable drawable = new GradientDrawable();
+        drawable.setColor(color);
+        drawable.setCornerRadius(dp(radius));
+        if (strokeWidth > 0) {
+            drawable.setStroke(dp(strokeWidth), strokeColor);
+        }
+        return drawable;
+    }
+
+    private Drawable fclRipple(int color, int radius, int strokeColor, int strokeWidth) {
+        return new RippleDrawable(ColorStateList.valueOf(0x1F3478F6),
+                fclRounded(color, radius, strokeColor, strokeWidth),
+                fclRounded(Color.WHITE, radius, Color.TRANSPARENT, 0));
+    }
+
+    private LinearLayout fclCard() {
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setPadding(dp(16), dp(14), dp(16), dp(14));
+        card.setBackground(fclRounded(FCL_SURFACE, 16, FCL_BORDER, 1));
+        return card;
+    }
+
+    private void addFclCard(LinearLayout parent, LinearLayout card) {
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT);
+        params.setMargins(0, 0, 0, dp(12));
+        parent.addView(card, params);
+    }
+
+    private TextView fclCardTitle(String text) {
+        TextView title = new TextView(this);
+        title.setText(text);
+        title.setTextSize(16);
+        title.setTypeface(null, Typeface.BOLD);
+        title.setTextColor(FCL_TEXT);
+        return title;
+    }
+
+    private TextView fclCardHint(String text) {
+        TextView hint = new TextView(this);
+        hint.setText(text);
+        hint.setTextSize(12);
+        hint.setTextColor(FCL_MUTED);
+        hint.setLineSpacing(0, 1.15f);
+        hint.setPadding(0, dp(3), 0, dp(10));
+        return hint;
+    }
+
+    private void addFclDivider(LinearLayout parent) {
+        View divider = new View(this);
+        divider.setBackgroundColor(FCL_BORDER);
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, Math.max(1, dp(1)));
+        params.setMargins(0, dp(10), 0, dp(10));
+        parent.addView(divider, params);
+    }
+
+    private LinearLayout fclSwitchRow(String titleText, String hintText, Switch control) {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(0, dp(3), 0, dp(3));
+
+        LinearLayout texts = new LinearLayout(this);
+        texts.setOrientation(LinearLayout.VERTICAL);
+        TextView title = new TextView(this);
+        title.setText(titleText);
+        title.setTextSize(15);
+        title.setTextColor(FCL_TEXT);
+        texts.addView(title);
+        TextView hint = new TextView(this);
+        hint.setText(hintText);
+        hint.setTextSize(12);
+        hint.setTextColor(FCL_MUTED);
+        hint.setPadding(0, dp(3), dp(12), 0);
+        texts.addView(hint);
+        row.addView(texts, new LinearLayout.LayoutParams(
+                0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+
+        control.setShowText(false);
+        control.setMinWidth(dp(52));
+        row.addView(control);
+        row.setClickable(true);
+        row.setOnClickListener(v -> control.setChecked(!control.isChecked()));
+        return row;
+    }
+
+    private Button fclActionButton(String text, boolean primary) {
+        Button button = new Button(this);
+        button.setText(text);
+        button.setTextSize(14);
+        button.setAllCaps(false);
+        button.setTypeface(null, primary ? Typeface.BOLD : Typeface.NORMAL);
+        button.setTextColor(primary ? Color.WHITE : FCL_ACCENT);
+        button.setMinWidth(0);
+        button.setMinimumHeight(dp(44));
+        button.setPadding(dp(12), dp(6), dp(12), dp(6));
+        button.setGravity(Gravity.CENTER);
+        button.setStateListAnimator(null);
+        button.setBackground(fclRipple(primary ? FCL_ACCENT : Color.WHITE, 11,
+                primary ? FCL_ACCENT : FCL_BORDER, 1));
+        return button;
+    }
+
+    private Button fclSegmentButton(String text, boolean selected) {
+        Button button = fclActionButton(text, false);
+        button.setTextSize(13);
+        setFclSegmentSelected(button, selected);
+        return button;
+    }
+
+    private void setFclSegmentSelected(Button button, boolean selected) {
+        button.setTypeface(null, selected ? Typeface.BOLD : Typeface.NORMAL);
+        button.setTextColor(selected ? Color.WHITE : FCL_MUTED);
+        button.setBackground(fclRipple(selected ? FCL_ACCENT : Color.WHITE, 11,
+                selected ? FCL_ACCENT : FCL_BORDER, 1));
+    }
+
+    private Spinner fclSettingsSpinner(List<String> values) {
+        Spinner spinner = new Spinner(this, Spinner.MODE_DROPDOWN);
+        ArrayAdapter<String> adapter = new ArrayAdapter<String>(this,
+                android.R.layout.simple_spinner_item, values) {
+            private TextView style(View view, boolean dropdown) {
+                TextView text = (TextView) view;
+                text.setTextSize(14);
+                text.setTextColor(FCL_TEXT);
+                text.setGravity(Gravity.CENTER_VERTICAL);
+                text.setMinHeight(dp(dropdown ? 46 : 44));
+                text.setPadding(dp(12), dp(8), dp(12), dp(8));
+                if (dropdown) {
+                    text.setBackgroundColor(Color.WHITE);
+                }
+                return text;
+            }
+
+            @Override
+            public View getView(int position, View convertView, android.view.ViewGroup parent) {
+                return style(super.getView(position, convertView, parent), false);
+            }
+
+            @Override
+            public View getDropDownView(int position, View convertView,
+                                        android.view.ViewGroup parent) {
+                return style(super.getDropDownView(position, convertView, parent), true);
+            }
+        };
+        adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        spinner.setAdapter(adapter);
+        spinner.setMinimumHeight(dp(46));
+        spinner.setBackground(fclRipple(Color.WHITE, 11, FCL_BORDER, 1));
+        spinner.setPopupBackgroundDrawable(fclRounded(Color.WHITE, 11, FCL_BORDER, 1));
+        return spinner;
+    }
+
     private void buildFclSection(LinearLayout root) {
         SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
 
         TextView header = new TextView(this);
         header.setText(R.string.section_fcl_controller);
-        header.setTextSize(16);
+        header.setTextSize(18);
         header.setTypeface(null, Typeface.BOLD);
-        header.setPadding(0, dp(24), 0, dp(8));
+        header.setTextColor(FCL_TEXT);
+        header.setPadding(0, dp(28), 0, dp(6));
         root.addView(header);
 
-        // === Bottom overlay mode: original bar or FCL controller (二选一) ===
-        TextView modeLabel = new TextView(this);
-        modeLabel.setText(R.string.bottom_overlay_label);
-        modeLabel.setTextSize(14);
-        modeLabel.setPadding(0, dp(8), 0, dp(4));
-        root.addView(modeLabel);
+        TextView intro = new TextView(this);
+        intro.setText("使用 FCL 布局作为游戏中的按键与摇杆覆盖层。");
+        intro.setTextSize(13);
+        intro.setTextColor(FCL_MUTED);
+        intro.setPadding(0, 0, 0, dp(12));
+        root.addView(intro);
 
-        Spinner modeSpinner = new Spinner(this);
-        modeSpinner.setAdapter(new ArrayAdapter<>(this,
-            android.R.layout.simple_spinner_dropdown_item,
-            getResources().getStringArray(R.array.bottom_overlay_options)));
-        String curMode = prefs.getString(KEY_BOTTOM_MODE, BOTTOM_MODES[0]);
-        int modeIdx = 0;
-        for (int i = 0; i < BOTTOM_MODES.length; i++) {
-            if (BOTTOM_MODES[i].equals(curMode)) { modeIdx = i; break; }
-        }
-        modeSpinner.setSelection(modeIdx);
-        modeSpinner.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
-            @Override
-            public void onItemSelected(AdapterView<?> parent, View v, int pos, long id) {
-                getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
-                    .putString(KEY_BOTTOM_MODE, BOTTOM_MODES[pos]).apply();
-            }
-            @Override
-            public void onNothingSelected(AdapterView<?> parent) {}
-        });
-        root.addView(modeSpinner);
+        // Display behaviour: a switch is clearer than the old two-item spinner.
+        LinearLayout displayCard = fclCard();
+        displayCard.addView(fclCardTitle("显示方式"));
+        displayCard.addView(fclCardHint("启用后，FCL 控制器会替代底部扩展按键栏。"));
+        Switch enableSwitch = new Switch(this);
+        enableSwitch.setChecked("fcl".equals(prefs.getString(
+                KEY_BOTTOM_MODE, BOTTOM_MODES[0])));
+        LinearLayout enableRow = fclSwitchRow("启用 FCL 覆盖层",
+                "关闭后恢复原来的扩展按键栏", enableSwitch);
+        displayCard.addView(enableRow);
+        addFclDivider(displayCard);
 
-        TextView modeHint = new TextView(this);
-        modeHint.setText(R.string.bottom_overlay_hint);
-        modeHint.setTextSize(12);
-        modeHint.setTextColor(Color.GRAY);
-        modeHint.setPadding(0, dp(4), 0, dp(8));
-        root.addView(modeHint);
-
-        // === Always lock the overlay in the foreground / Back toggles when off ===
         Switch alwaysSwitch = new Switch(this);
-        alwaysSwitch.setText(R.string.fcl_always_switch);
-        alwaysSwitch.setTextSize(14);
-        alwaysSwitch.setPadding(0, dp(8), 0, 0);
         alwaysSwitch.setChecked(prefs.getBoolean(KEY_FCL_ALWAYS, false));
+        LinearLayout alwaysRow = fclSwitchRow("始终显示", "开启后返回键不会隐藏控制器", alwaysSwitch);
+        displayCard.addView(alwaysRow);
+        Runnable updateDisplayState = () -> {
+            boolean enabled = enableSwitch.isChecked();
+            alwaysSwitch.setEnabled(enabled);
+            alwaysRow.setClickable(enabled);
+            alwaysRow.setAlpha(enabled ? 1f : 0.45f);
+        };
+        enableSwitch.setOnCheckedChangeListener((v, checked) -> {
+            prefs.edit().putString(KEY_BOTTOM_MODE, checked ? "fcl" : "extra_keys").apply();
+            updateDisplayState.run();
+        });
         alwaysSwitch.setOnCheckedChangeListener((v, checked) ->
-            getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
-                .putBoolean(KEY_FCL_ALWAYS, checked).apply());
-        root.addView(alwaysSwitch);
+                prefs.edit().putBoolean(KEY_FCL_ALWAYS, checked).apply());
+        updateDisplayState.run();
+        addFclCard(root, displayCard);
 
-        TextView alwaysHint = new TextView(this);
-        alwaysHint.setText(R.string.fcl_always_hint);
-        alwaysHint.setTextSize(12);
-        alwaysHint.setTextColor(Color.GRAY);
-        alwaysHint.setPadding(0, dp(4), 0, dp(8));
-        root.addView(alwaysHint);
-
-        TextView label = new TextView(this);
-        label.setText(R.string.fcl_controller_label);
-        label.setText("横屏控制器");
-        label.setTextSize(14);
-        label.setPadding(0, dp(16), 0, dp(4));
-        root.addView(label);
-
+        // One selected target and one profile picker replace the old landscape /
+        // portrait / management-target trio.  Every action below follows this target.
         final List<String> controllerIds = availableControllerIds();
         List<String> names = new ArrayList<>();
         for (String cid : controllerIds) {
             names.add(controllerDisplayName(cid));
         }
-        Spinner spinner = new Spinner(this);
-        spinner.setAdapter(new ArrayAdapter<>(this,
-            android.R.layout.simple_spinner_dropdown_item, names));
-        String current = prefs.getString(KEY_FCL_CONTROLLER, BUNDLED_CONTROLLER_IDS[0]);
-        int idx = 0;
-        for (int i = 0; i < controllerIds.size(); i++) {
-            if (controllerIds.get(i).equals(current)) { idx = i; break; }
-        }
-        spinner.setSelection(idx);
-        spinner.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+        LinearLayout layoutCard = fclCard();
+        layoutCard.addView(fclCardTitle("布局配置"));
+        layoutCard.addView(fclCardHint("先选择横屏或竖屏；后面的布局与操作只作用于该方向。"));
+
+        LinearLayout targetTabs = new LinearLayout(this);
+        targetTabs.setOrientation(LinearLayout.HORIZONTAL);
+        Button landscapeTab = fclSegmentButton("横屏", !"portrait".equals(manageTarget));
+        Button portraitTab = fclSegmentButton("竖屏", "portrait".equals(manageTarget));
+        targetTabs.addView(landscapeTab, new LinearLayout.LayoutParams(0, dp(44), 1f));
+        LinearLayout.LayoutParams portraitTabParams = new LinearLayout.LayoutParams(0, dp(44), 1f);
+        portraitTabParams.setMarginStart(dp(8));
+        targetTabs.addView(portraitTab, portraitTabParams);
+        layoutCard.addView(targetTabs);
+
+        TextView profileLabel = new TextView(this);
+        profileLabel.setTextSize(13);
+        profileLabel.setTextColor(FCL_MUTED);
+        profileLabel.setPadding(0, dp(14), 0, dp(4));
+        layoutCard.addView(profileLabel);
+        Spinner profileSpinner = fclSettingsSpinner(names);
+        layoutCard.addView(profileSpinner, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+
+        Button editBtn = fclActionButton("编辑当前布局", true);
+        LinearLayout.LayoutParams editParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, dp(46));
+        editParams.setMargins(0, dp(14), 0, 0);
+        layoutCard.addView(editBtn, editParams);
+
+        LinearLayout actions = new LinearLayout(this);
+        actions.setOrientation(LinearLayout.HORIZONTAL);
+        LinearLayout.LayoutParams actionsParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, dp(44));
+        actionsParams.setMargins(0, dp(8), 0, 0);
+        layoutCard.addView(actions, actionsParams);
+        Button addBtn = fclActionButton("新建", false);
+        Button importBtn = fclActionButton("导入", false);
+        Button moreBtn = fclActionButton("更多", false);
+        actions.addView(addBtn, new LinearLayout.LayoutParams(0,
+                LinearLayout.LayoutParams.MATCH_PARENT, 1f));
+        LinearLayout.LayoutParams importParams = new LinearLayout.LayoutParams(0,
+                LinearLayout.LayoutParams.MATCH_PARENT, 1f);
+        importParams.setMarginStart(dp(8));
+        actions.addView(importBtn, importParams);
+        LinearLayout.LayoutParams moreParams = new LinearLayout.LayoutParams(0,
+                LinearLayout.LayoutParams.MATCH_PARENT, 1f);
+        moreParams.setMarginStart(dp(8));
+        actions.addView(moreBtn, moreParams);
+
+        final Runnable refreshTargetUi = () -> {
+            boolean portrait = "portrait".equals(manageTarget);
+            setFclSegmentSelected(landscapeTab, !portrait);
+            setFclSegmentSelected(portraitTab, portrait);
+            profileLabel.setText(portrait ? "当前竖屏布局" : "当前横屏布局");
+            editBtn.setText(portrait ? "编辑竖屏布局" : "编辑横屏布局");
+            String currentId = manageTargetControllerId();
+            int selection = 0;
+            for (int i = 0; i < controllerIds.size(); i++) {
+                if (controllerIds.get(i).equals(currentId)) {
+                    selection = i;
+                    break;
+                }
+            }
+            profileSpinner.setSelection(selection);
+        };
+        profileSpinner.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
             @Override
             public void onItemSelected(AdapterView<?> parent, View v, int pos, long id) {
-                getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
-                    .putString(KEY_FCL_CONTROLLER, controllerIds.get(pos)).apply();
+                if (pos >= 0 && pos < controllerIds.size()) {
+                    prefs.edit().putString(manageTargetKey(), controllerIds.get(pos)).apply();
+                }
             }
             @Override
             public void onNothingSelected(AdapterView<?> parent) {}
         });
-        root.addView(spinner);
-
-        // === 竖屏控制器 profile ===
-        TextView portraitLabel = new TextView(this);
-        portraitLabel.setText("竖屏控制器");
-        portraitLabel.setTextSize(14);
-        portraitLabel.setPadding(0, dp(16), 0, dp(4));
-        root.addView(portraitLabel);
-
-        Spinner portraitSpinner = new Spinner(this);
-        portraitSpinner.setAdapter(new ArrayAdapter<>(this,
-            android.R.layout.simple_spinner_dropdown_item, names));
-        String currentPortrait = prefs.getString(KEY_FCL_CONTROLLER_PORTRAIT,
-                DEFAULT_FCL_CONTROLLER_PORTRAIT);
-        int pIdx = 0;
-        for (int i = 0; i < controllerIds.size(); i++) {
-            if (controllerIds.get(i).equals(currentPortrait)) { pIdx = i; break; }
-        }
-        portraitSpinner.setSelection(pIdx);
-        portraitSpinner.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
-            @Override
-            public void onItemSelected(AdapterView<?> parent, View v, int pos, long id) {
-                getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
-                    .putString(KEY_FCL_CONTROLLER_PORTRAIT, controllerIds.get(pos)).apply();
-            }
-            @Override
-            public void onNothingSelected(AdapterView<?> parent) {}
+        landscapeTab.setOnClickListener(v -> {
+            manageTarget = "landscape";
+            refreshTargetUi.run();
         });
-        root.addView(portraitSpinner);
-
-        // === 管理目标: the six action buttons below operate on this profile ===
-        TextView targetLabel = new TextView(this);
-        targetLabel.setText("管理目标");
-        targetLabel.setTextSize(14);
-        targetLabel.setPadding(0, dp(16), 0, dp(4));
-        root.addView(targetLabel);
-
-        Spinner targetSpinner = new Spinner(this);
-        String[] targetNames = {"横屏控制器", "竖屏控制器"};
-        targetSpinner.setAdapter(new ArrayAdapter<>(this,
-                android.R.layout.simple_spinner_dropdown_item, targetNames));
-        targetSpinner.setSelection("portrait".equals(manageTarget) ? 1 : 0);
-        targetSpinner.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
-            @Override
-            public void onItemSelected(AdapterView<?> parent, View v, int pos, long id) {
-                manageTarget = pos == 0 ? "landscape" : "portrait";
-            }
-            @Override
-            public void onNothingSelected(AdapterView<?> parent) {}
+        portraitTab.setOnClickListener(v -> {
+            manageTarget = "portrait";
+            refreshTargetUi.run();
         });
-        root.addView(targetSpinner);
-
-        // === Controller management: 编辑 / 新增 / 删除 ===
-        LinearLayout manageButtons = new LinearLayout(this);
-        manageButtons.setOrientation(LinearLayout.HORIZONTAL);
-        manageButtons.setPadding(0, dp(8), 0, 0);
-
-        Button editBtn = new Button(this);
-        editBtn.setText("编辑");
         editBtn.setOnClickListener(v -> {
-            // Ask MainActivity to open the overlay straight into edit mode.
             getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
-                .putBoolean(KEY_FCL_EDIT_REQUESTED, true)
-                .putString(KEY_FCL_EDIT_TARGET, manageTarget).apply();
+                    .putBoolean(KEY_FCL_EDIT_REQUESTED, true)
+                    .putString(KEY_FCL_EDIT_TARGET, manageTarget).apply();
             finish();
         });
-        manageButtons.addView(editBtn);
-
-        Button addBtn = new Button(this);
-        addBtn.setText("新增");
         addBtn.setOnClickListener(v -> promptAddController());
-        manageButtons.addView(addBtn);
-
-        Button deleteBtn = new Button(this);
-        deleteBtn.setText("删除");
-        deleteBtn.setOnClickListener(v -> promptDeleteController());
-        manageButtons.addView(deleteBtn);
-
-        root.addView(manageButtons);
-
-        // === Import / export / reset actions ===
-        LinearLayout fclButtons = new LinearLayout(this);
-        fclButtons.setOrientation(LinearLayout.HORIZONTAL);
-        fclButtons.setPadding(0, dp(8), 0, 0);
-
-        Button importBtn = new Button(this);
-        importBtn.setText(R.string.fcl_import);
-        importBtn.setOnClickListener(v -> {
-            Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
-            intent.addCategory(Intent.CATEGORY_OPENABLE);
-            intent.setType("application/json");
-            startActivityForResult(intent, REQ_IMPORT_CONTROLLER);
-        });
-        fclButtons.addView(importBtn);
-
-        Button exportBtn = new Button(this);
-        exportBtn.setText(R.string.fcl_export);
-        exportBtn.setOnClickListener(v -> {
-            String cid = manageTargetControllerId();
-            Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT);
-            intent.addCategory(Intent.CATEGORY_OPENABLE);
-            intent.setType("application/json");
-            intent.putExtra(Intent.EXTRA_TITLE, cid + ".json");
-            startActivityForResult(intent, REQ_EXPORT_CONTROLLER);
-        });
-        fclButtons.addView(exportBtn);
-
-        Button resetLayoutBtn = new Button(this);
-        resetLayoutBtn.setText(R.string.fcl_reset_layout);
-        resetLayoutBtn.setOnClickListener(v -> {
-            String ctrlId = manageTargetControllerId();
-            getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
-                .remove("fcl_pos_" + ctrlId).apply();
-            Toast.makeText(this, R.string.fcl_reset_done, Toast.LENGTH_SHORT).show();
-        });
-        fclButtons.addView(resetLayoutBtn);
-
-        root.addView(fclButtons);
-
-        TextView hint = new TextView(this);
-        hint.setText(R.string.fcl_controller_hint);
-        hint.setTextSize(12);
-        hint.setTextColor(Color.GRAY);
-        hint.setPadding(0, dp(4), 0, dp(8));
-        root.addView(hint);
+        importBtn.setOnClickListener(v -> launchFclImport());
+        moreBtn.setOnClickListener(v -> showFclMoreActions());
+        refreshTargetUi.run();
+        addFclCard(root, layoutCard);
     }
 
     // ============================================================
@@ -600,6 +700,46 @@ public class SettingsActivity extends Activity {
     private String manageTargetControllerId() {
         return getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
                 .getString(manageTargetKey(), manageTargetDefault());
+    }
+
+    private void launchFclImport() {
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("application/json");
+        startActivityForResult(intent, REQ_IMPORT_CONTROLLER);
+    }
+
+    private void launchFclExport() {
+        String controllerId = manageTargetControllerId();
+        Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("application/json");
+        intent.putExtra(Intent.EXTRA_TITLE, controllerId + ".json");
+        startActivityForResult(intent, REQ_EXPORT_CONTROLLER);
+    }
+
+    private void resetManagedFclLayout() {
+        String controllerId = manageTargetControllerId();
+        getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
+                .remove("fcl_pos_" + controllerId).apply();
+        Toast.makeText(this, R.string.fcl_reset_done, Toast.LENGTH_SHORT).show();
+    }
+
+    private void showFclMoreActions() {
+        String direction = "portrait".equals(manageTarget) ? "竖屏" : "横屏";
+        new AlertDialog.Builder(this)
+                .setTitle(direction + "布局操作")
+                .setItems(new String[]{"导出当前布局", "重置布局位置", "删除当前布局"},
+                        (dialog, which) -> {
+                            if (which == 0) {
+                                launchFclExport();
+                            } else if (which == 1) {
+                                resetManagedFclLayout();
+                            } else {
+                                promptDeleteController();
+                            }
+                        })
+                .show();
     }
 
     private void promptAddController() {
@@ -677,7 +817,7 @@ public class SettingsActivity extends Activity {
             JSONObject obj = new JSONObject(
                     new String(readControllerBytes(id), StandardCharsets.UTF_8));
             String name = obj.optString("name", "");
-            return name.isEmpty() ? id : name + " (" + id + ")";
+            return name.isEmpty() || name.equals(id) ? id : name + " (" + id + ")";
         } catch (Exception e) {
             return id;
         }

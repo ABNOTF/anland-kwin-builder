@@ -902,6 +902,34 @@ public class FclControllerView extends FrameLayout {
         return new FclToggle(getContext(), label, "选中", "未选");
     }
 
+    /** Compact multi-column cell used by the keycode picker. */
+    private TextView keycodeChip(String label, boolean selected) {
+        TextView chip = new TextView(getContext());
+        chip.setTag(label);
+        chip.setTextSize(12);
+        chip.setGravity(Gravity.CENTER);
+        chip.setSingleLine(true);
+        chip.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        chip.setPadding(dp(8), dp(6), dp(8), dp(6));
+        chip.setMinimumHeight(dp(42));
+        chip.setClickable(true);
+        chip.setFocusable(true);
+        setKeycodeChipSelected(chip, selected);
+        return chip;
+    }
+
+    private void setKeycodeChipSelected(TextView chip, boolean selected) {
+        String label = (String) chip.getTag();
+        chip.setSelected(selected);
+        chip.setText((selected ? "✓ " : "") + label);
+        chip.setTextColor(selected ? Color.WHITE : UI_TEXT);
+        chip.setTypeface(null, selected ? Typeface.BOLD : Typeface.NORMAL);
+        chip.setBackground(rippleDrawable(
+                selected ? UI_ACCENT : UI_SURFACE,
+                dp(11), selected ? UI_ACCENT : UI_BORDER, dp(1)));
+        chip.setContentDescription(label + (selected ? "，已选中" : "，未选中"));
+    }
+
     private Button ghostButton(String text) {
         Button b = new Button(getContext());
         prepareButton(b, text);
@@ -1151,38 +1179,71 @@ public class FclControllerView extends FrameLayout {
 
             EditText searchInput = fclEditText("名称或数字键码");
             searchInput.setInputType(InputType.TYPE_CLASS_TEXT);
-            LinearLayout searchRow = formRow(formLabel("搜索"), searchInput);
             LinearLayout.LayoutParams searchParams = new LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.MATCH_PARENT,
                     LinearLayout.LayoutParams.WRAP_CONTENT);
-            searchParams.setMargins(0, dp(12), 0, dp(8));
-            searchRow.setLayoutParams(searchParams);
-            root.addView(searchRow);
+            searchParams.setMargins(0, dp(10), 0, dp(4));
+            root.addView(searchInput, searchParams);
 
-            TextView selectedText = sectionHeader("");
-            root.addView(selectedText);
+            LinearLayout selectionBar = new LinearLayout(getContext());
+            selectionBar.setOrientation(LinearLayout.HORIZONTAL);
+            selectionBar.setGravity(Gravity.CENTER_VERTICAL);
+            selectionBar.setPadding(dp(2), dp(3), dp(2), dp(5));
+            TextView selectedText = new TextView(getContext());
+            selectedText.setTextSize(12);
+            selectedText.setTextColor(UI_TEXT_MUTED);
+            selectionBar.addView(selectedText, new LinearLayout.LayoutParams(
+                    0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+            TextView clearText = new TextView(getContext());
+            clearText.setText("清空");
+            clearText.setTextSize(12);
+            clearText.setTextColor(UI_ACCENT);
+            clearText.setTypeface(null, Typeface.BOLD);
+            clearText.setPadding(dp(10), dp(6), dp(2), dp(6));
+            clearText.setClickable(true);
+            clearText.setFocusable(true);
+            selectionBar.addView(clearText);
+            root.addView(selectionBar);
 
             ScrollView listScroll = new ScrollView(getContext());
             listScroll.setFillViewport(true);
             listScroll.setScrollBarStyle(View.SCROLLBARS_INSIDE_OVERLAY);
-            LinearLayout list = new LinearLayout(getContext());
-            list.setOrientation(LinearLayout.VERTICAL);
-            list.setPadding(dp(1), 0, dp(3), dp(8));
-            listScroll.addView(list);
+            LinearLayout grid = new LinearLayout(getContext());
+            grid.setOrientation(LinearLayout.VERTICAL);
+            grid.setPadding(dp(1), 0, dp(3), dp(4));
+            listScroll.addView(grid);
             root.addView(listScroll, new LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f));
 
-            final View[] rows = new View[n];
+            int columns = getResources().getConfiguration().orientation
+                    == android.content.res.Configuration.ORIENTATION_LANDSCAPE ? 3 : 2;
+            final TextView[] chips = new TextView[n];
             final String[] searchTokens = new String[n];
-            Runnable updateCount = () -> selectedText.setText(
-                    "已选择 " + workingCodes.size() + " 项");
+            final List<LinearLayout> chipRows = new ArrayList<>();
+            final Runnable updateCount = () -> {
+                selectedText.setText("已选择 " + workingCodes.size() + " 项");
+                clearText.setAlpha(workingCodes.isEmpty() ? 0.45f : 1f);
+            };
             for (int i = 0; i < n; i++) {
                 final int code = (Integer) KEYCODE_ENTRIES[i][0];
                 String name = (String) KEYCODE_ENTRIES[i][1];
-                FclToggle toggle = fclSelectionSwitch(name);
-                toggle.setChecked(workingCodes.contains(code));
-                toggle.setOnCheckedChangeListener(() -> {
-                    if (toggle.isChecked()) {
+                if (i % columns == 0) {
+                    LinearLayout row = new LinearLayout(getContext());
+                    row.setOrientation(LinearLayout.HORIZONTAL);
+                    LinearLayout.LayoutParams rowParams = new LinearLayout.LayoutParams(
+                            LinearLayout.LayoutParams.MATCH_PARENT, dp(44));
+                    if (!chipRows.isEmpty()) {
+                        rowParams.topMargin = dp(6);
+                    }
+                    grid.addView(row, rowParams);
+                    chipRows.add(row);
+                }
+                final TextView chip = keycodeChip(name + " · " + code,
+                        workingCodes.contains(code));
+                chip.setOnClickListener(v -> {
+                    boolean selected = !chip.isSelected();
+                    setKeycodeChipSelected(chip, selected);
+                    if (selected) {
                         if (!workingCodes.contains(code)) {
                             workingCodes.add(code);
                         }
@@ -1191,14 +1252,40 @@ public class FclControllerView extends FrameLayout {
                     }
                     updateCount.run();
                 });
-                LinearLayout row = formRow(
-                        formLabel(name + "  ·  " + code), toggle);
-                rows[i] = row;
+                LinearLayout.LayoutParams chipParams = new LinearLayout.LayoutParams(
+                        0, LinearLayout.LayoutParams.MATCH_PARENT, 1f);
+                if (i % columns != 0) {
+                    chipParams.setMarginStart(dp(6));
+                }
+                chipRows.get(chipRows.size() - 1).addView(chip, chipParams);
+                chips[i] = chip;
                 searchTokens[i] = (name + " " + code)
                         .toLowerCase(java.util.Locale.ROOT);
-                list.addView(row);
+            }
+            int remainder = n % columns;
+            if (remainder != 0) {
+                LinearLayout lastRow = chipRows.get(chipRows.size() - 1);
+                for (int i = remainder; i < columns; i++) {
+                    View filler = new View(getContext());
+                    filler.setVisibility(INVISIBLE);
+                    LinearLayout.LayoutParams fillerParams = new LinearLayout.LayoutParams(
+                            0, LinearLayout.LayoutParams.MATCH_PARENT, 1f);
+                    fillerParams.setMarginStart(dp(6));
+                    lastRow.addView(filler, fillerParams);
+                }
             }
             updateCount.run();
+
+            clearText.setOnClickListener(v -> {
+                if (workingCodes.isEmpty()) {
+                    return;
+                }
+                workingCodes.clear();
+                for (TextView chip : chips) {
+                    setKeycodeChipSelected(chip, false);
+                }
+                updateCount.run();
+            });
 
             searchInput.addTextChangedListener(new android.text.TextWatcher() {
                 @Override
@@ -1213,9 +1300,20 @@ public class FclControllerView extends FrameLayout {
                 public void afterTextChanged(android.text.Editable editable) {
                     String query = editable.toString().trim()
                             .toLowerCase(java.util.Locale.ROOT);
-                    for (int i = 0; i < rows.length; i++) {
-                        rows[i].setVisibility(query.isEmpty()
+                    for (int i = 0; i < chips.length; i++) {
+                        chips[i].setVisibility(query.isEmpty()
                                 || searchTokens[i].contains(query) ? VISIBLE : GONE);
+                    }
+                    for (LinearLayout row : chipRows) {
+                        boolean visible = false;
+                        for (int i = 0; i < row.getChildCount(); i++) {
+                            View child = row.getChildAt(i);
+                            if (child instanceof TextView && child.getVisibility() == VISIBLE) {
+                                visible = true;
+                                break;
+                            }
+                        }
+                        row.setVisibility(visible ? VISIBLE : GONE);
                     }
                     listScroll.scrollTo(0, 0);
                 }
@@ -1224,7 +1322,7 @@ public class FclControllerView extends FrameLayout {
             LinearLayout bottom = new LinearLayout(getContext());
             bottom.setOrientation(LinearLayout.HORIZONTAL);
             bottom.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
-            bottom.setPadding(0, dp(12), 0, 0);
+            bottom.setPadding(0, dp(8), 0, 0);
             Button cancelBtn = ghostButton("取消");
             Button saveBtn = accentButton("应用");
             bottom.addView(cancelBtn);
