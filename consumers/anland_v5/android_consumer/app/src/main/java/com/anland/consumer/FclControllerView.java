@@ -18,6 +18,9 @@ import android.widget.Button;
 import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
+import android.widget.ScrollView;
+import android.widget.Spinner;
+import android.widget.ArrayAdapter;
 import android.widget.Switch;
 import android.widget.Toast;
 
@@ -45,6 +48,24 @@ public class FclControllerView extends FrameLayout {
 
     private static final int LONG_PRESS_MS = 400;
     private static final int AUTO_CLICK_MS = 20;
+
+    // Common evdev keycodes for the editor's keycode picker (FCL-style).
+    private static final Object[][] KEYCODE_ENTRIES = {
+        {1, "ESC"}, {2, "1"}, {3, "2"}, {4, "3"}, {5, "4"}, {6, "5"},
+        {7, "6"}, {8, "7"}, {9, "8"}, {10, "9"}, {11, "0"},
+        {14, "BACKSPACE"}, {15, "TAB"}, {28, "ENTER"}, {57, "SPACE"}, {58, "CAPS"},
+        {16, "Q"}, {17, "W"}, {18, "E"}, {19, "R"}, {20, "T"}, {21, "Y"},
+        {22, "U"}, {23, "I"}, {24, "O"}, {25, "P"},
+        {30, "A"}, {31, "S"}, {32, "D"}, {33, "F"}, {34, "G"}, {35, "H"},
+        {36, "J"}, {37, "K"}, {38, "L"}, {44, "Z"}, {45, "X"}, {46, "C"},
+        {47, "V"}, {48, "B"}, {49, "N"}, {50, "M"},
+        {29, "CTRL"}, {42, "SHIFT"}, {56, "ALT"}, {125, "META"},
+        {59, "F1"}, {60, "F2"}, {61, "F3"}, {62, "F4"}, {63, "F5"}, {64, "F6"},
+        {65, "F7"}, {66, "F8"}, {67, "F9"}, {68, "F10"}, {87, "F11"}, {88, "F12"},
+        {103, "↑"}, {105, "←"}, {106, "→"}, {108, "↓"}, {102, "HOME"}, {107, "END"},
+        {1000, "鼠标左键"}, {1001, "鼠标中键"}, {1002, "鼠标右键"},
+        {1003, "滚轮上"}, {1004, "滚轮下"},
+    };
 
     // FCL special keycodes (see FCLInput.MOUSE_* / FCLKeycodes).
     private static final int FCL_MOUSE_LEFT = 1000;
@@ -89,6 +110,7 @@ public class FclControllerView extends FrameLayout {
     private Button editButton;
     private Button addButton;
     private Button deleteButton;
+    private Button addKeyButton;
 
     private FclController controller;
     private Bridge bridge;
@@ -149,6 +171,9 @@ public class FclControllerView extends FrameLayout {
         }
         if (editButton != null) {
             editButton.setText(editMode ? "完成" : "编辑");
+        }
+        if (addKeyButton != null) {
+            addKeyButton.setVisibility(editMode ? VISIBLE : GONE);
         }
         invalidate();
     }
@@ -260,10 +285,13 @@ public class FclControllerView extends FrameLayout {
         editButton = new Button(getContext());
         addButton = new Button(getContext());
         deleteButton = new Button(getContext());
+        addKeyButton = new Button(getContext());
         editButton.setText(editMode ? "完成" : "编辑");
         addButton.setText("新增");
         deleteButton.setText("删除");
-        for (Button b : new Button[]{editButton, addButton, deleteButton}) {
+        addKeyButton.setText("加键");
+        addKeyButton.setVisibility(editMode ? VISIBLE : GONE);
+        for (Button b : new Button[]{editButton, addButton, deleteButton, addKeyButton}) {
             b.setTextSize(11);
             b.setAllCaps(false);
             b.setPadding(dp(8), dp(2), dp(8), dp(2));
@@ -287,10 +315,13 @@ public class FclControllerView extends FrameLayout {
             addButton.setX(x);
             x -= addButton.getMeasuredWidth() + gap;
             editButton.setX(x);
+            x -= editButton.getMeasuredWidth() + gap;
+            addKeyButton.setX(x);
             int y = dp(8);
             deleteButton.setY(y);
             addButton.setY(y);
             editButton.setY(y);
+            addKeyButton.setY(y);
         });
         editButton.setOnClickListener(v -> {
             if (editMode) {
@@ -301,6 +332,7 @@ public class FclControllerView extends FrameLayout {
         });
         addButton.setOnClickListener(v -> promptAddController());
         deleteButton.setOnClickListener(v -> promptDeleteController());
+        addKeyButton.setOnClickListener(v -> addNewKey());
     }
 
     private void removeToolbarIfAttached() {
@@ -313,10 +345,84 @@ public class FclControllerView extends FrameLayout {
         if (deleteButton != null && deleteButton.getParent() == this) {
             removeView(deleteButton);
         }
+        if (addKeyButton != null && addKeyButton.getParent() == this) {
+            removeView(addKeyButton);
+        }
+    }
+
+    /** FCL-style "add key": append a fresh button to the first visible group. */
+    private void addNewKey() {
+        if (controller == null) {
+            return;
+        }
+        try {
+            JSONObject group = controller.firstEditableGroupJson();
+            if (group == null) {
+                Toast.makeText(getContext(), "没有可编辑的视图组", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            JSONObject vd = group.optJSONObject("viewData");
+            if (vd == null) {
+                vd = new JSONObject();
+                group.put("viewData", vd);
+            }
+            JSONArray bl = vd.optJSONArray("buttonList");
+            if (bl == null) {
+                bl = new JSONArray();
+                vd.put("buttonList", bl);
+            }
+            JSONObject btn = FclController.newButtonJson("新按键");
+            bl.put(btn);
+            if (!controller.saveToFile(getContext())) {
+                Toast.makeText(getContext(), "保存失败", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            final String newId = btn.optString("id", "");
+            reloadController();
+            // Open the new key's editor right away.
+            post(() -> {
+                for (View v : controls) {
+                    if (v instanceof FclButtonView
+                            && newId.equals(((FclButtonView) v).data.id)) {
+                        ((FclButtonView) v).openPropertyDialog();
+                        break;
+                    }
+                }
+            });
+        } catch (JSONException e) {
+            Toast.makeText(getContext(), "新增失败: " + e.getMessage(),
+                    Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    private JSONObject groupJsonForControl(String controlId) {
+        if (controller == null) {
+            return null;
+        }
+        for (FclController.ViewGroup g : controller.viewGroups) {
+            for (FclController.Button b : g.buttons) {
+                if (b.id.equals(controlId)) {
+                    return controller.findGroupJson(g.id);
+                }
+            }
+            for (FclController.Direction d : g.directions) {
+                if (d.id.equals(controlId)) {
+                    return controller.findGroupJson(g.id);
+                }
+            }
+        }
+        return null;
     }
 
     /** Save pending drag positions and per-key edits into the controller file. */
     public void saveEdit() {
+        applyPendingPositionsToJson();
+        controller.saveToFile(getContext());
+        reloadController();
+        setEditMode(false);
+    }
+
+    private void applyPendingPositionsToJson() {
         if (controller == null) {
             return;
         }
@@ -337,8 +443,6 @@ public class FclControllerView extends FrameLayout {
             } catch (JSONException ignored) {
             }
         }
-        controller.saveToFile(getContext());
-        reloadController();
     }
 
     /** Back / 完成 in edit mode: ask whether to keep the changes. */
@@ -409,7 +513,6 @@ public class FclControllerView extends FrameLayout {
             savedPositions.clear();
             pendingPositions.clear();
             writePositions();
-            setEditMode(false);
             rebuild();
         }
     }
@@ -959,89 +1062,326 @@ public class FclControllerView extends FrameLayout {
             return true;
         }
 
-        /** Edit this key's text, keycodes and the anland drag-move property. */
+        /** FCL-style editor: 信息/事件 tabs, four event types, keycode picker. */
         private void openPropertyDialog() {
             if (controller == null) {
                 return;
             }
+            final JSONObject btn = controller.findControlJson(data.id);
+            if (btn == null) {
+                return;
+            }
+            final String[] eventKeys = {"pressEvent", "longPressEvent",
+                    "clickEvent", "doubleClickEvent"};
+            final String[] eventTabs = {"按下", "长按", "单击", "双击"};
+            final String[] flagNames = {"持续按住", "连点", "打开菜单",
+                    "切换触摸模式", "切换鼠标模式", "输入", "快捷输入"};
+            final String[] flagKeys = {"autoKeep", "autoClick", "openMenu",
+                    "switchTouchMode", "switchMouseMode", "input", "quickInput"};
+            final int pad = dp(12);
+
+            LinearLayout root = new LinearLayout(getContext());
+            root.setOrientation(LinearLayout.VERTICAL);
+            root.setPadding(pad, pad, pad, pad);
+
+            // ---- 信息 / 事件 tabs ----
+            LinearLayout tabBar = new LinearLayout(getContext());
+            tabBar.setOrientation(LinearLayout.HORIZONTAL);
+            Button infoTab = new Button(getContext());
+            infoTab.setText("信息");
+            Button eventTab = new Button(getContext());
+            eventTab.setText("事件");
+            tabBar.addView(infoTab);
+            tabBar.addView(eventTab);
+            root.addView(tabBar);
+
+            // ---- info panel ----
+            LinearLayout infoPanel = new LinearLayout(getContext());
+            infoPanel.setOrientation(LinearLayout.VERTICAL);
+
             EditText textInput = new EditText(getContext());
             textInput.setHint("按键文字");
             textInput.setText(data.text);
+            infoPanel.addView(textInput);
 
-            EditText codeInput = new EditText(getContext());
-            codeInput.setHint("键码（按下事件，逗号分隔）");
-            codeInput.setInputType(InputType.TYPE_CLASS_NUMBER
-                    | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
-            StringBuilder sb = new StringBuilder();
-            for (int c : data.pressEvent.outputKeycodes) {
-                if (sb.length() > 0) {
-                    sb.append(",");
-                }
-                sb.append(c);
+            Spinner visSpinner = new Spinner(getContext());
+            String[] visNames = {"始终", "游戏中", "菜单"};
+            visSpinner.setAdapter(new ArrayAdapter<>(getContext(),
+                    android.R.layout.simple_spinner_dropdown_item, visNames));
+            String vis = btn.optJSONObject("baseInfo") != null
+                    ? btn.optJSONObject("baseInfo").optString("visibilityType", "ALWAYS")
+                    : "ALWAYS";
+            visSpinner.setSelection("ALWAYS".equals(vis) ? 0
+                    : ("IN_GAME".equals(vis) ? 1 : 2));
+            infoPanel.addView(visSpinner);
+
+            EditText xInput = new EditText(getContext());
+            xInput.setHint("X位置（千分比 0-1000）");
+            xInput.setInputType(InputType.TYPE_CLASS_NUMBER);
+            xInput.setText(String.valueOf(data.baseInfo.xPosition));
+            infoPanel.addView(xInput);
+
+            EditText yInput = new EditText(getContext());
+            yInput.setHint("Y位置（千分比 0-1000）");
+            yInput.setInputType(InputType.TYPE_CLASS_NUMBER);
+            yInput.setText(String.valueOf(data.baseInfo.yPosition));
+            infoPanel.addView(yInput);
+
+            Spinner sizeSpinner = new Spinner(getContext());
+            String[] sizeNames = {"百分比", "绝对dp"};
+            sizeSpinner.setAdapter(new ArrayAdapter<>(getContext(),
+                    android.R.layout.simple_spinner_dropdown_item, sizeNames));
+            sizeSpinner.setSelection("ABSOLUTE".equals(data.baseInfo.sizeType) ? 1 : 0);
+            infoPanel.addView(sizeSpinner);
+
+            Spinner refSpinner = new Spinner(getContext());
+            String[] refNames = {"参照屏宽", "参照屏高"};
+            refSpinner.setAdapter(new ArrayAdapter<>(getContext(),
+                    android.R.layout.simple_spinner_dropdown_item, refNames));
+            refSpinner.setSelection("SCREEN_WIDTH"
+                    .equals(data.baseInfo.percentageWidth.reference) ? 0 : 1);
+            infoPanel.addView(refSpinner);
+
+            EditText sizeInput = new EditText(getContext());
+            sizeInput.setHint("宽（百分比 0-1000 或 dp）");
+            sizeInput.setInputType(InputType.TYPE_CLASS_NUMBER);
+            int sizeVal = "ABSOLUTE".equals(data.baseInfo.sizeType)
+                    ? data.baseInfo.absoluteWidth
+                    : data.baseInfo.percentageWidth.size;
+            sizeInput.setText(String.valueOf(sizeVal));
+            infoPanel.addView(sizeInput);
+
+            Spinner styleSpinner = new Spinner(getContext());
+            List<String> styleNames = new ArrayList<>(controller.buttonStylesByName.keySet());
+            if (styleNames.isEmpty()) {
+                styleNames.add("Default");
             }
-            codeInput.setText(sb.toString());
+            styleSpinner.setAdapter(new ArrayAdapter<>(getContext(),
+                    android.R.layout.simple_spinner_dropdown_item, styleNames));
+            int styleIdx = styleNames.indexOf(btn.optString("style", "Default"));
+            styleSpinner.setSelection(styleIdx < 0 ? 0 : styleIdx);
+            infoPanel.addView(styleSpinner);
+
+            // ---- event panel ----
+            LinearLayout eventPanel = new LinearLayout(getContext());
+            eventPanel.setOrientation(LinearLayout.VERTICAL);
+
+            Switch pointerSwitch = new Switch(getContext());
+            pointerSwitch.setText("指针跟随 (pointerFollow)");
+            pointerSwitch.setChecked(data.pointerFollow);
+            eventPanel.addView(pointerSwitch);
 
             Switch dragSwitch = new Switch(getContext());
             dragSwitch.setText("按住拖动移动鼠标");
             dragSwitch.setChecked(data.dragMoveMouse);
+            eventPanel.addView(dragSwitch);
 
-            Switch keepSwitch = new Switch(getContext());
-            keepSwitch.setText("持续按住 (autoKeep)");
-            keepSwitch.setChecked(data.pressEvent.autoKeep);
+            Switch movableSwitch = new Switch(getContext());
+            movableSwitch.setText("可移动 (Movable)");
+            movableSwitch.setChecked(data.movable);
+            eventPanel.addView(movableSwitch);
 
-            LinearLayout layout = new LinearLayout(getContext());
-            layout.setOrientation(LinearLayout.VERTICAL);
-            int pad = dp(12);
-            layout.setPadding(pad, pad, pad, pad);
-            layout.addView(textInput);
-            layout.addView(codeInput);
-            layout.addView(dragSwitch);
-            layout.addView(keepSwitch);
+            final List<List<Integer>> evCodes = new ArrayList<>();
+            final String[] evText = new String[4];
+            final boolean[][] evFlags = new boolean[4][7];
+            for (int i = 0; i < 4; i++) {
+                JSONObject e = btn.optJSONObject("event") != null
+                        ? btn.optJSONObject("event").optJSONObject(eventKeys[i]) : null;
+                evText[i] = e != null ? e.optString("outputText", "") : "";
+                List<Integer> codes = new ArrayList<>();
+                JSONArray arr = e != null ? e.optJSONArray("outputKeycodes") : null;
+                if (arr != null) {
+                    for (int k = 0; k < arr.length(); k++) {
+                        codes.add(arr.optInt(k, 0));
+                    }
+                }
+                evCodes.add(codes);
+                for (int f = 0; f < 7; f++) {
+                    evFlags[i][f] = e != null && e.optBoolean(flagKeys[f], false);
+                }
+            }
 
-            new AlertDialog.Builder(getContext())
+            LinearLayout eventTabBar = new LinearLayout(getContext());
+            eventTabBar.setOrientation(LinearLayout.HORIZONTAL);
+            final Button[] eventTabButtons = new Button[4];
+            for (int i = 0; i < 4; i++) {
+                eventTabButtons[i] = new Button(getContext());
+                eventTabButtons[i].setText(eventTabs[i]);
+                eventTabBar.addView(eventTabButtons[i]);
+            }
+            eventPanel.addView(eventTabBar);
+
+            final LinearLayout eventBody = new LinearLayout(getContext());
+            eventBody.setOrientation(LinearLayout.VERTICAL);
+            eventPanel.addView(eventBody);
+
+            final View[] eventBodies = new View[4];
+            final Switch[][] evSwitches = new Switch[4][7];
+            final EditText[] evTextInputs = new EditText[4];
+            final Button[] evCodeButtons = new Button[4];
+            for (int i = 0; i < 4; i++) {
+                final int fi = i;
+                LinearLayout body = new LinearLayout(getContext());
+                body.setOrientation(LinearLayout.VERTICAL);
+                for (int f = 0; f < 7; f++) {
+                    evSwitches[i][f] = new Switch(getContext());
+                    evSwitches[i][f].setText(flagNames[f]);
+                    evSwitches[i][f].setChecked(evFlags[i][f]);
+                    body.addView(evSwitches[i][f]);
+                }
+                evTextInputs[i] = new EditText(getContext());
+                evTextInputs[i].setHint("输出文本");
+                evTextInputs[i].setText(evText[i]);
+                body.addView(evTextInputs[i]);
+                evCodeButtons[i] = new Button(getContext());
+                evCodeButtons[i].setText("键码: " + joinCodes(evCodes.get(i)));
+                evCodeButtons[i].setOnClickListener(v -> openKeycodePicker(
+                        evCodes.get(fi),
+                        () -> evCodeButtons[fi].setText("键码: " + joinCodes(evCodes.get(fi)))));
+                body.addView(evCodeButtons[i]);
+                eventBodies[i] = body;
+            }
+            eventBody.addView(eventBodies[0]);
+            for (int i = 0; i < 4; i++) {
+                final int fi = i;
+                eventTabButtons[i].setOnClickListener(v -> {
+                    eventBody.removeAllViews();
+                    eventBody.addView(eventBodies[fi]);
+                });
+            }
+
+            root.addView(infoPanel);
+            root.addView(eventPanel);
+            eventPanel.setVisibility(GONE);
+            infoTab.setOnClickListener(v -> {
+                infoPanel.setVisibility(VISIBLE);
+                eventPanel.setVisibility(GONE);
+            });
+            eventTab.setOnClickListener(v -> {
+                infoPanel.setVisibility(GONE);
+                eventPanel.setVisibility(VISIBLE);
+            });
+
+            // ---- bottom actions ----
+            LinearLayout bottom = new LinearLayout(getContext());
+            bottom.setOrientation(LinearLayout.HORIZONTAL);
+            Button okBtn = new Button(getContext());
+            okBtn.setText("确定");
+            Button cancelBtn = new Button(getContext());
+            cancelBtn.setText("取消");
+            Button cloneBtn = new Button(getContext());
+            cloneBtn.setText("克隆");
+            Button delBtn = new Button(getContext());
+            delBtn.setText("删除");
+            bottom.addView(okBtn);
+            bottom.addView(cancelBtn);
+            bottom.addView(cloneBtn);
+            bottom.addView(delBtn);
+            root.addView(bottom);
+
+            ScrollView scroll = new ScrollView(getContext());
+            scroll.addView(root);
+            AlertDialog dialog = new AlertDialog.Builder(getContext())
                     .setTitle("编辑按键" + (data.text == null || data.text.isEmpty()
                             ? "" : " · " + data.text))
-                    .setView(layout)
-                    .setPositiveButton("保存", (d, w) -> savePropertyJson(
-                            textInput.getText().toString(),
-                            codeInput.getText().toString(),
-                            dragSwitch.isChecked(),
-                            keepSwitch.isChecked()))
-                    .setNegativeButton("取消", null)
-                    .show();
+                    .setView(scroll)
+                    .create();
+            okBtn.setOnClickListener(v -> {
+                for (int i = 0; i < 4; i++) {
+                    evText[i] = evTextInputs[i].getText().toString();
+                    for (int f = 0; f < 7; f++) {
+                        evFlags[i][f] = evSwitches[i][f].isChecked();
+                    }
+                }
+                savePropertyJson(
+                        textInput.getText().toString(),
+                        visSpinner.getSelectedItemPosition(),
+                        xInput.getText().toString(),
+                        yInput.getText().toString(),
+                        sizeSpinner.getSelectedItemPosition(),
+                        refSpinner.getSelectedItemPosition(),
+                        sizeInput.getText().toString(),
+                        styleSpinner.getSelectedItem().toString(),
+                        pointerSwitch.isChecked(),
+                        dragSwitch.isChecked(),
+                        movableSwitch.isChecked(),
+                        evFlags, evText, evCodes);
+                dialog.dismiss();
+            });
+            cancelBtn.setOnClickListener(v -> dialog.dismiss());
+            cloneBtn.setOnClickListener(v -> {
+                cloneButtonJson(btn);
+                dialog.dismiss();
+            });
+            delBtn.setOnClickListener(v -> {
+                deleteButtonJson(btn);
+                dialog.dismiss();
+            });
+            dialog.show();
         }
 
-        private void savePropertyJson(String text, String codes, boolean dragMove,
-                                      boolean autoKeep) {
+        private void savePropertyJson(String text, int visIdx, String xs, String ys,
+                                      int sizeIdx, int refIdx, String sizeVal,
+                                      String style, boolean pointerFollow,
+                                      boolean dragMove, boolean movable,
+                                      boolean[][] flags, String[] texts,
+                                      List<List<Integer>> codes) {
             JSONObject btn = controller.findControlJson(data.id);
             if (btn == null) {
                 return;
             }
             try {
-                btn.put("text", text);
+                JSONObject base = btn.optJSONObject("baseInfo");
+                if (base == null) {
+                    base = new JSONObject();
+                    btn.put("baseInfo", base);
+                }
                 JSONObject ev = btn.optJSONObject("event");
                 if (ev == null) {
                     ev = new JSONObject();
                     btn.put("event", ev);
                 }
+                btn.put("text", text);
+                btn.put("style", style);
+                base.put("visibilityType", visIdx == 0 ? "ALWAYS"
+                        : (visIdx == 1 ? "IN_GAME" : "MENU"));
+                base.put("xPosition", parseIntClamped(xs, 0, 1000, data.baseInfo.xPosition));
+                base.put("yPosition", parseIntClamped(ys, 0, 1000, data.baseInfo.yPosition));
+                boolean abs = sizeIdx == 1;
+                base.put("sizeType", abs ? "ABSOLUTE" : "PERCENTAGE");
+                String reference = refIdx == 0 ? "SCREEN_WIDTH" : "SCREEN_HEIGHT";
+                int size = parseIntClamped(sizeVal, 0, abs ? 2000 : 1000, 120);
+                if (abs) {
+                    base.put("absoluteWidth", size);
+                    base.put("absoluteHeight", size);
+                } else {
+                    base.put("percentageWidth", new JSONObject()
+                            .put("reference", reference).put("size", size));
+                    base.put("percentageHeight", new JSONObject()
+                            .put("reference", reference).put("size", size));
+                }
+                ev.put("pointerFollow", pointerFollow);
                 ev.put("dragMoveMouse", dragMove);
-                JSONObject press = ev.optJSONObject("pressEvent");
-                if (press == null) {
-                    press = new JSONObject();
-                    ev.put("pressEvent", press);
-                }
-                press.put("autoKeep", autoKeep);
-                JSONArray keycodes = new JSONArray();
-                for (String s : codes.split(",")) {
-                    String t = s.trim();
-                    if (!t.isEmpty()) {
-                        try {
-                            keycodes.put(Integer.parseInt(t));
-                        } catch (NumberFormatException ignored) {
-                        }
+                ev.put("Movable", movable);
+                final String[] eventKeys = {"pressEvent", "longPressEvent",
+                        "clickEvent", "doubleClickEvent"};
+                final String[] flagKeys = {"autoKeep", "autoClick", "openMenu",
+                        "switchTouchMode", "switchMouseMode", "input", "quickInput"};
+                for (int i = 0; i < 4; i++) {
+                    JSONObject e = new JSONObject();
+                    for (int f = 0; f < 7; f++) {
+                        e.put(flagKeys[f], flags[i][f]);
                     }
+                    e.put("outputText", texts[i]);
+                    JSONArray arr = new JSONArray();
+                    for (int c : codes.get(i)) {
+                        arr.put(c);
+                    }
+                    e.put("outputKeycodes", arr);
+                    ev.put(eventKeys[i], e);
                 }
-                press.put("outputKeycodes", keycodes);
+                btn.put("event", ev);
+                applyPendingPositionsToJson();
                 if (controller.saveToFile(getContext())) {
                     reloadController();
                 } else {
@@ -1051,6 +1391,103 @@ public class FclControllerView extends FrameLayout {
                 Toast.makeText(getContext(), "保存失败: " + e.getMessage(),
                         Toast.LENGTH_SHORT).show();
             }
+        }
+
+        private void openKeycodePicker(final List<Integer> codes, final Runnable after) {
+            final int n = KEYCODE_ENTRIES.length;
+            String[] labels = new String[n];
+            boolean[] checked = new boolean[n];
+            for (int i = 0; i < n; i++) {
+                int code = (Integer) KEYCODE_ENTRIES[i][0];
+                labels[i] = KEYCODE_ENTRIES[i][1] + " (" + code + ")";
+                checked[i] = codes.contains(code);
+            }
+            new AlertDialog.Builder(getContext())
+                    .setTitle("选择键码")
+                    .setMultiChoiceItems(labels, checked, (d, which, isChecked) -> {
+                        int code = (Integer) KEYCODE_ENTRIES[which][0];
+                        if (isChecked) {
+                            if (!codes.contains(code)) {
+                                codes.add(code);
+                            }
+                        } else {
+                            codes.remove((Integer) code);
+                        }
+                    })
+                    .setPositiveButton("确定", (d, w) -> after.run())
+                    .setNegativeButton("取消", null)
+                    .show();
+        }
+
+        private void cloneButtonJson(JSONObject btn) {
+            try {
+                JSONObject copy = new JSONObject(btn.toString());
+                copy.put("id", String.format(java.util.Locale.US, "%08x",
+                        new java.util.Random().nextInt(0x10000000)));
+                JSONObject group = groupJsonForControl(data.id);
+                if (group == null) {
+                    return;
+                }
+                JSONObject vd = group.optJSONObject("viewData");
+                if (vd == null) {
+                    vd = new JSONObject();
+                    group.put("viewData", vd);
+                }
+                JSONArray bl = vd.optJSONArray("buttonList");
+                if (bl == null) {
+                    bl = new JSONArray();
+                    vd.put("buttonList", bl);
+                }
+                bl.put(copy);
+                if (controller.saveToFile(getContext())) {
+                    reloadController();
+                }
+            } catch (JSONException e) {
+                Toast.makeText(getContext(), "克隆失败: " + e.getMessage(),
+                        Toast.LENGTH_SHORT).show();
+            }
+        }
+
+        private void deleteButtonJson(JSONObject btn) {
+            JSONObject group = groupJsonForControl(data.id);
+            if (group == null) {
+                return;
+            }
+            JSONObject vd = group.optJSONObject("viewData");
+            JSONArray bl = vd != null ? vd.optJSONArray("buttonList") : null;
+            if (bl == null) {
+                return;
+            }
+            for (int i = 0; i < bl.length(); i++) {
+                JSONObject b = bl.optJSONObject(i);
+                if (b != null && data.id.equals(b.optString("id"))) {
+                    bl.remove(i);
+                    break;
+                }
+            }
+            if (controller.saveToFile(getContext())) {
+                reloadController();
+            }
+        }
+
+        private int parseIntClamped(String s, int min, int max, int def) {
+            try {
+                int v = Integer.parseInt(s.trim());
+                return Math.max(min, Math.min(max, v));
+            } catch (Exception e) {
+                return def;
+            }
+        }
+
+        private String joinCodes(List<Integer> codes) {
+            StringBuilder sb = new StringBuilder();
+            for (int c : codes) {
+                if (sb.length() > 0) {
+                    sb.append(",");
+                }
+                sb.append(c);
+            }
+            return sb.length() == 0 ? "（无）" : sb.toString();
         }
 
         private void trigger(FclController.Event ev, boolean enable, boolean clickType,

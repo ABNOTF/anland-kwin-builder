@@ -185,6 +185,67 @@ public final class FclController {
         return null;
     }
 
+    /** Find a view-group JSON object by id, for the editor. */
+    public JSONObject findGroupJson(String groupId) {
+        JSONArray groups = root.optJSONArray("viewGroups");
+        if (groups == null) {
+            return null;
+        }
+        for (int i = 0; i < groups.length(); i++) {
+            JSONObject g = groups.optJSONObject(i);
+            if (g != null && groupId.equals(g.optString("id"))) {
+                return g;
+            }
+        }
+        return null;
+    }
+
+    /** The first visible view group (or the first group if none is marked visible). */
+    public JSONObject firstEditableGroupJson() {
+        JSONArray groups = root.optJSONArray("viewGroups");
+        if (groups == null || groups.length() == 0) {
+            return null;
+        }
+        JSONObject fallback = groups.optJSONObject(0);
+        for (int i = 0; i < groups.length(); i++) {
+            JSONObject g = groups.optJSONObject(i);
+            if (g != null && "VISIBLE".equals(g.optString("visibility"))) {
+                return g;
+            }
+        }
+        return fallback;
+    }
+
+    /** Build a fresh default button JSON for the editor's "add key". */
+    public static JSONObject newButtonJson(String text) throws JSONException {
+        String id = String.format(java.util.Locale.US, "%08x",
+                new java.util.Random().nextInt(0x10000000));
+        JSONObject btn = new JSONObject();
+        btn.put("id", id);
+        btn.put("text", text == null ? "" : text);
+        btn.put("style", "Default");
+        JSONObject base = new JSONObject();
+        base.put("visibilityType", "ALWAYS");
+        base.put("xPosition", 500);
+        base.put("yPosition", 500);
+        base.put("sizeType", "PERCENTAGE");
+        base.put("absoluteWidth", 50);
+        base.put("absoluteHeight", 50);
+        base.put("percentageWidth", new JSONObject()
+                .put("reference", "SCREEN_HEIGHT").put("size", 120));
+        base.put("percentageHeight", new JSONObject()
+                .put("reference", "SCREEN_HEIGHT").put("size", 120));
+        btn.put("baseInfo", base);
+        JSONObject ev = new JSONObject();
+        ev.put("pointerFollow", false);
+        ev.put("Movable", false);
+        ev.put("pressEvent", new JSONObject()
+                .put("autoKeep", false).put("autoClick", false)
+                .put("outputKeycodes", new JSONArray()));
+        btn.put("event", ev);
+        return btn;
+    }
+
     /** Persist the (possibly edited) controller JSON to files/fcl_controllers/<id>.json. */
     public boolean saveToFile(Context context) {
         try {
