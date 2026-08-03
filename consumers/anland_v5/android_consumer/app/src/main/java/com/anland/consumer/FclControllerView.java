@@ -1207,7 +1207,8 @@ public class FclControllerView extends FrameLayout {
             scroll.addView(content);
             body.addView(scroll, new LinearLayout.LayoutParams(0,
                     LinearLayout.LayoutParams.MATCH_PARENT, 1f));
-            root.addView(body);
+            root.addView(body, new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f));
 
             // ---- info panel ----
             LinearLayout infoPanel = new LinearLayout(getContext());
@@ -1397,6 +1398,10 @@ public class FclControllerView extends FrameLayout {
             if (dialog.getWindow() != null) {
                 dialog.getWindow().setBackgroundDrawable(
                         new android.graphics.drawable.ColorDrawable(0));
+                int maxW = getResources().getDisplayMetrics().widthPixels;
+                int w = Math.min(dp(500), maxW - dp(24));
+                dialog.getWindow().setLayout(w,
+                        android.view.ViewGroup.LayoutParams.MATCH_PARENT);
             }
             dialog.setContentView(root);
             okBtn.setOnClickListener(v -> {
@@ -2041,6 +2046,10 @@ public class FclControllerView extends FrameLayout {
             if (dialog.getWindow() != null) {
                 dialog.getWindow().setBackgroundDrawable(
                         new android.graphics.drawable.ColorDrawable(0));
+                int maxW = getResources().getDisplayMetrics().widthPixels;
+                int w = Math.min(dp(500), maxW - dp(24));
+                dialog.getWindow().setLayout(w,
+                        android.view.ViewGroup.LayoutParams.MATCH_PARENT);
             }
             dialog.setContentView(scroll);
             okBtn.setOnClickListener(v -> {
