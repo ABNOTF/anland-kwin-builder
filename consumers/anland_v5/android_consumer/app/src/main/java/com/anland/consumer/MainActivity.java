@@ -107,6 +107,10 @@ public class MainActivity extends Activity
     // FCL-Controllers, rendered by FclControllerView).
     private static final String KEY_FCL_CONTROLLER = "fcl_controller_id";
     private static final String DEFAULT_FCL_CONTROLLER = "00000000";
+    // Portrait orientation uses its own controller profile (defaults to a bundled
+    // copy of the Default controller so both orientations start with the same keys).
+    private static final String KEY_FCL_CONTROLLER_PORTRAIT = "fcl_controller_id_portrait";
+    private static final String DEFAULT_FCL_CONTROLLER_PORTRAIT = "00000001";
     // Which bottom overlay is active: the original extra-keys bar or the FCL
     // controller. Mutually exclusive (二选一).
     private static final String KEY_BOTTOM_MODE = "bottom_overlay_mode";
@@ -307,6 +311,8 @@ public class MainActivity extends Activity
         // not resize the separate window).
         if (fclWindowAdded && fclControllerView != null) {
             removeFclOverlayWindow();
+            // Each orientation has its own controller profile.
+            loadFclController(fclControllerId());
             showFclOverlayWindow();
         }
     }
@@ -570,6 +576,21 @@ public class MainActivity extends Activity
             @Override public void openSettings() {
                 startActivity(new Intent(MainActivity.this, SettingsActivity.class));
             }
+            // The overlay's 新增/删除 management buttons switch this orientation's
+            // controller profile; null means fall back to the bundled default.
+            @Override public void selectController(String id) {
+                SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+                String finalId = (id != null && !id.isEmpty()) ? id
+                        : (isPortrait() ? DEFAULT_FCL_CONTROLLER_PORTRAIT
+                                        : DEFAULT_FCL_CONTROLLER);
+                prefs.edit().putString(
+                        isPortrait() ? KEY_FCL_CONTROLLER_PORTRAIT : KEY_FCL_CONTROLLER,
+                        finalId).apply();
+                loadFclController(finalId);
+                if (fclControllerView != null) {
+                    fclControllerView.rebuild();
+                }
+            }
         });
         fclControllerView.setVisibility(View.GONE);
         // The FCL overlay lives in its OWN window (TYPE_APPLICATION_PANEL). A
@@ -757,6 +778,22 @@ public class MainActivity extends Activity
         fclControllerView.setController(controller);
     }
 
+    /** Whether the app window is currently in portrait orientation. */
+    private boolean isPortrait() {
+        return getResources().getConfiguration().orientation
+                == android.content.res.Configuration.ORIENTATION_PORTRAIT;
+    }
+
+    /** Controller profile id for the current orientation. */
+    private String fclControllerId() {
+        SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+        if (isPortrait()) {
+            return prefs.getString(KEY_FCL_CONTROLLER_PORTRAIT,
+                    DEFAULT_FCL_CONTROLLER_PORTRAIT);
+        }
+        return prefs.getString(KEY_FCL_CONTROLLER, DEFAULT_FCL_CONTROLLER);
+    }
+
     /** Show/hide the overlay according to the Settings switch. */
     private void applyFclPrefs() {
         if (fclControllerView == null) return;
@@ -767,7 +804,7 @@ public class MainActivity extends Activity
             hideFclController();
             return;
         }
-        loadFclController(prefs.getString(KEY_FCL_CONTROLLER, DEFAULT_FCL_CONTROLLER));
+        loadFclController(fclControllerId());
         if (!fclControllerView.hasController()) {
             return;
         }
@@ -784,7 +821,7 @@ public class MainActivity extends Activity
             return;
         }
         SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
-        loadFclController(prefs.getString(KEY_FCL_CONTROLLER, DEFAULT_FCL_CONTROLLER));
+        loadFclController(fclControllerId());
         if (!fclControllerView.hasController()) return;
         mFclHiddenByBack = false;
         showFclOverlayWindow();
@@ -2254,6 +2291,11 @@ public class MainActivity extends Activity
         // FCL bottom mode: Back toggles the overlay unless it is locked to the
         // foreground, in which case Back is swallowed so the overlay stays up.
         if (keyCode == KeyEvent.KEYCODE_BACK && isFclBottomMode()) {
+            // While editing the controller, Back first asks whether to save.
+            if (fclControllerView != null && fclControllerView.isEditMode()) {
+                fclControllerView.promptExitEditMode();
+                return true;
+            }
             if (prefs.getBoolean(KEY_FCL_ALWAYS, false)) {
                 if (fclControllerView == null
                         || fclControllerView.getVisibility() != View.VISIBLE) {
@@ -2286,6 +2328,10 @@ public class MainActivity extends Activity
         // Same FCL handling for OEMs that dispatch Back via onBackPressed().
         SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
         if (isFclBottomMode()) {
+            if (fclControllerView != null && fclControllerView.isEditMode()) {
+                fclControllerView.promptExitEditMode();
+                return;
+            }
             boolean locked = prefs.getBoolean(KEY_FCL_ALWAYS, false);
             if (!locked) {
                 toggleFclControllerOverlay();

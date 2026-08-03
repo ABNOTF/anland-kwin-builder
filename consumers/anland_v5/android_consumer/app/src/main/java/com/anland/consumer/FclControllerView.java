@@ -1,5 +1,6 @@
 package com.anland.consumer;
 
+import android.app.AlertDialog;
 import android.content.Context;
 import android.graphics.Canvas;
 import android.graphics.Paint;
@@ -8,10 +9,17 @@ import android.content.SharedPreferences;
 import android.os.Handler;
 import android.os.Looper;
 import android.text.TextPaint;
+import android.text.InputType;
+import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewConfiguration;
+import android.widget.Button;
+import android.widget.EditText;
 import android.widget.FrameLayout;
+import android.widget.LinearLayout;
+import android.widget.Switch;
+import android.widget.Toast;
 
 import org.json.JSONArray;
 import org.json.JSONException;
@@ -60,6 +68,8 @@ public class FclControllerView extends FrameLayout {
         void toggleIme();
         void toggleVirtualKeyboard();
         void openSettings();
+        /** Switch the current orientation's controller profile; null = default. */
+        void selectController(String id);
     }
 
     /**
@@ -75,6 +85,10 @@ public class FclControllerView extends FrameLayout {
     private final float density;
     private final List<View> controls = new ArrayList<>();
     private final Map<String, Boolean> groupVisible = new HashMap<>();
+    // Controller management toolbar (编辑 / 新增 / 删除), rebuilt with the controls.
+    private Button editButton;
+    private Button addButton;
+    private Button deleteButton;
 
     private FclController controller;
     private Bridge bridge;
@@ -132,6 +146,9 @@ public class FclControllerView extends FrameLayout {
         this.editMode = editMode;
         if (!editMode) {
             pendingPositions.clear();
+        }
+        if (editButton != null) {
+            editButton.setText(editMode ? "完成" : "编辑");
         }
         invalidate();
     }
@@ -221,7 +238,7 @@ public class FclControllerView extends FrameLayout {
                 addView(view);
                 controls.add(view);
             }
-            for (FclController.Direction direction : group.directions) {
+        for (FclController.Direction direction : group.directions) {
                 if ("EDIT".equals(direction.baseInfo.visibilityType)) {
                     continue;
                 }
@@ -232,8 +249,170 @@ public class FclControllerView extends FrameLayout {
                 controls.add(view);
             }
         }
+        buildToolbar();
         requestLayout();
         postInvalidate();
+    }
+
+    /** Top-right management toolbar: 编辑 / 新增 / 删除. */
+    private void buildToolbar() {
+        removeToolbarIfAttached();
+        editButton = new Button(getContext());
+        addButton = new Button(getContext());
+        deleteButton = new Button(getContext());
+        editButton.setText(editMode ? "完成" : "编辑");
+        addButton.setText("新增");
+        deleteButton.setText("删除");
+        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                Gravity.TOP | Gravity.START);
+        for (Button b : new Button[]{editButton, addButton, deleteButton}) {
+            b.setTextSize(11);
+            b.setAllCaps(false);
+            b.setPadding(dp(8), dp(2), dp(8), dp(2));
+            b.setBackgroundColor(0x99000000);
+            b.setTextColor(0xFFFFFFFF);
+            addView(b, lp);
+        }
+        // Chain the three buttons along the top edge once they are measured.
+        post(() -> {
+            if (deleteButton == null || deleteButton.getMeasuredWidth() <= 0) {
+                return;
+            }
+            int gap = dp(4);
+            int right = getWidth() - dp(8);
+            int x = right - deleteButton.getMeasuredWidth();
+            deleteButton.setX(x);
+            x -= deleteButton.getMeasuredWidth() + gap;
+            addButton.setX(x);
+            x -= addButton.getMeasuredWidth() + gap;
+            editButton.setX(x);
+            int y = dp(8);
+            deleteButton.setY(y);
+            addButton.setY(y);
+            editButton.setY(y);
+        });
+        editButton.setOnClickListener(v -> {
+            if (editMode) {
+                promptExitEditMode();
+            } else {
+                setEditMode(true);
+            }
+        });
+        addButton.setOnClickListener(v -> promptAddController());
+        deleteButton.setOnClickListener(v -> promptDeleteController());
+    }
+
+    private void removeToolbarIfAttached() {
+        if (editButton != null && editButton.getParent() == this) {
+            removeView(editButton);
+        }
+        if (addButton != null && addButton.getParent() == this) {
+            removeView(addButton);
+        }
+        if (deleteButton != null && deleteButton.getParent() == this) {
+            removeView(deleteButton);
+        }
+    }
+
+    /** Save pending drag positions and per-key edits into the controller file. */
+    public void saveEdit() {
+        if (controller == null) {
+            return;
+        }
+        for (Map.Entry<String, int[]> e : pendingPositions.entrySet()) {
+            JSONObject ctrl = controller.findControlJson(e.getKey());
+            if (ctrl == null) {
+                continue;
+            }
+            int[] pos = e.getValue();
+            try {
+                JSONObject base = ctrl.optJSONObject("baseInfo");
+                if (base == null) {
+                    base = new JSONObject();
+                    ctrl.put("baseInfo", base);
+                }
+                base.put("xPosition", pos[0]);
+                base.put("yPosition", pos[1]);
+            } catch (JSONException ignored) {
+            }
+        }
+        controller.saveToFile(getContext());
+        reloadController();
+    }
+
+    /** Back / 完成 in edit mode: ask whether to keep the changes. */
+    public void promptExitEditMode() {
+        if (!editMode) {
+            return;
+        }
+        new AlertDialog.Builder(getContext())
+                .setTitle("保存修改？")
+                .setMessage("是否保存对控制器的修改？")
+                .setPositiveButton("保存", (d, w) -> saveEdit())
+                .setNegativeButton("不保存", (d, w) -> discardPositions())
+                .setNeutralButton("取消", null)
+                .show();
+    }
+
+    private void promptAddController() {
+        EditText nameInput = new EditText(getContext());
+        nameInput.setHint("控制器名称");
+        LinearLayout wrap = new LinearLayout(getContext());
+        wrap.setPadding(dp(24), dp(8), dp(24), 0);
+        wrap.addView(nameInput);
+        new AlertDialog.Builder(getContext())
+                .setTitle("新增控制器")
+                .setView(wrap)
+                .setPositiveButton("创建", (d, w) -> {
+                    String newId = FclController.createCopy(getContext(), controller,
+                            nameInput.getText().toString());
+                    if (newId != null) {
+                        bridge.selectController(newId);
+                        Toast.makeText(getContext(), "已创建控制器", Toast.LENGTH_SHORT).show();
+                    } else {
+                        Toast.makeText(getContext(), "创建失败", Toast.LENGTH_SHORT).show();
+                    }
+                })
+                .setNegativeButton("取消", null)
+                .show();
+    }
+
+    private void promptDeleteController() {
+        if (controller == null) {
+            return;
+        }
+        new AlertDialog.Builder(getContext())
+                .setTitle("删除控制器")
+                .setMessage("删除 “" + controller.name + "”？")
+                .setPositiveButton("删除", (d, w) -> {
+                    if (controller.isBundled(getContext())) {
+                        Toast.makeText(getContext(), "内置控制器不能删除",
+                                Toast.LENGTH_SHORT).show();
+                    } else {
+                        FclController.deleteFromDisk(getContext(), controller.id);
+                        bridge.selectController(null);
+                    }
+                })
+                .setNegativeButton("取消", null)
+                .show();
+    }
+
+    /** Re-parse the controller from disk/asset (after edits) and rebuild. */
+    private void reloadController() {
+        if (controller == null) {
+            return;
+        }
+        FclController fresh = FclController.load(getContext(), controller.id);
+        if (fresh != null) {
+            controller = fresh;
+            savedPositions.clear();
+            pendingPositions.clear();
+            writePositions();
+            setEditMode(false);
+            rebuild();
+        }
     }
 
     @Override
@@ -692,7 +871,7 @@ public class FclControllerView extends FrameLayout {
                         downX = event.getX();
                         downY = event.getY();
                     }
-                    if (pointerFollowActive && data.pointerFollow) {
+                    if (pointerFollowActive && (data.pointerFollow || data.dragMoveMouse)) {
                         bridge.mouseMove((event.getX() - downX) * mouseSensitivity,
                                 (event.getY() - downY) * mouseSensitivity);
                         downX = event.getX();
@@ -766,10 +945,106 @@ public class FclControllerView extends FrameLayout {
                         int yTh = ph > getHeight()
                                 ? Math.round(1000f * getY() / (ph - getHeight())) : 0;
                         setPendingPosition(data.id, xTh, yTh);
+                    } else {
+                        openPropertyDialog();
                     }
                     return true;
             }
             return true;
+        }
+
+        /** Edit this key's text, keycodes and the anland drag-move property. */
+        private void openPropertyDialog() {
+            if (controller == null) {
+                return;
+            }
+            EditText textInput = new EditText(getContext());
+            textInput.setHint("按键文字");
+            textInput.setText(data.text);
+
+            EditText codeInput = new EditText(getContext());
+            codeInput.setHint("键码（按下事件，逗号分隔）");
+            codeInput.setInputType(InputType.TYPE_CLASS_NUMBER
+                    | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
+            StringBuilder sb = new StringBuilder();
+            for (int c : data.pressEvent.outputKeycodes) {
+                if (sb.length() > 0) {
+                    sb.append(",");
+                }
+                sb.append(c);
+            }
+            codeInput.setText(sb.toString());
+
+            Switch dragSwitch = new Switch(getContext());
+            dragSwitch.setText("按住拖动移动鼠标");
+            dragSwitch.setChecked(data.dragMoveMouse);
+
+            Switch keepSwitch = new Switch(getContext());
+            keepSwitch.setText("持续按住 (autoKeep)");
+            keepSwitch.setChecked(data.pressEvent.autoKeep);
+
+            LinearLayout layout = new LinearLayout(getContext());
+            layout.setOrientation(LinearLayout.VERTICAL);
+            int pad = dp(12);
+            layout.setPadding(pad, pad, pad, pad);
+            layout.addView(textInput);
+            layout.addView(codeInput);
+            layout.addView(dragSwitch);
+            layout.addView(keepSwitch);
+
+            new AlertDialog.Builder(getContext())
+                    .setTitle("编辑按键" + (data.text == null || data.text.isEmpty()
+                            ? "" : " · " + data.text))
+                    .setView(layout)
+                    .setPositiveButton("保存", (d, w) -> savePropertyJson(
+                            textInput.getText().toString(),
+                            codeInput.getText().toString(),
+                            dragSwitch.isChecked(),
+                            keepSwitch.isChecked()))
+                    .setNegativeButton("取消", null)
+                    .show();
+        }
+
+        private void savePropertyJson(String text, String codes, boolean dragMove,
+                                      boolean autoKeep) {
+            JSONObject btn = controller.findControlJson(data.id);
+            if (btn == null) {
+                return;
+            }
+            try {
+                btn.put("text", text);
+                JSONObject ev = btn.optJSONObject("event");
+                if (ev == null) {
+                    ev = new JSONObject();
+                    btn.put("event", ev);
+                }
+                ev.put("dragMoveMouse", dragMove);
+                JSONObject press = ev.optJSONObject("pressEvent");
+                if (press == null) {
+                    press = new JSONObject();
+                    ev.put("pressEvent", press);
+                }
+                press.put("autoKeep", autoKeep);
+                JSONArray keycodes = new JSONArray();
+                for (String s : codes.split(",")) {
+                    String t = s.trim();
+                    if (!t.isEmpty()) {
+                        try {
+                            keycodes.put(Integer.parseInt(t));
+                        } catch (NumberFormatException ignored) {
+                        }
+                    }
+                }
+                press.put("outputKeycodes", keycodes);
+                if (controller.saveToFile(getContext())) {
+                    reloadController();
+                } else {
+                    Toast.makeText(getContext(), "保存失败", Toast.LENGTH_SHORT).show();
+                }
+            } catch (JSONException e) {
+                Toast.makeText(getContext(), "保存失败: " + e.getMessage(),
+                        Toast.LENGTH_SHORT).show();
+            }
         }
 
         private void trigger(FclController.Event ev, boolean enable, boolean clickType,

@@ -8,6 +8,7 @@ import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.io.ByteArrayOutputStream;
+import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
@@ -44,8 +45,11 @@ public final class FclController {
     public final List<DirectionStyle> directionStyles = new ArrayList<>();
     public final Map<String, DirectionStyle> directionStylesByName = new HashMap<>();
     public final List<ViewGroup> viewGroups = new ArrayList<>();
+    /** The raw JSON this controller was parsed from; the editor mutates it in place. */
+    private final JSONObject root;
 
     private FclController(JSONObject root) throws JSONException {
+        this.root = root;
         id = root.optString("id", "");
         name = root.optString("name", id);
         version = root.optString("version", "");
@@ -140,6 +144,89 @@ public final class FclController {
             }
         }
         return loadFromAssets(context, id);
+    }
+
+    /** The raw controller JSON (the editor mutates this object). */
+    public JSONObject rootJson() {
+        return root;
+    }
+
+    /** Find a control (button or direction) JSON object by id, for the editor. */
+    public JSONObject findControlJson(String controlId) {
+        JSONArray groups = root.optJSONArray("viewGroups");
+        if (groups == null) {
+            return null;
+        }
+        for (int g = 0; g < groups.length(); g++) {
+            JSONObject group = groups.optJSONObject(g);
+            JSONObject vd = group != null ? group.optJSONObject("viewData") : null;
+            if (vd == null) {
+                continue;
+            }
+            JSONArray bl = vd.optJSONArray("buttonList");
+            if (bl != null) {
+                for (int i = 0; i < bl.length(); i++) {
+                    JSONObject b = bl.optJSONObject(i);
+                    if (b != null && controlId.equals(b.optString("id"))) {
+                        return b;
+                    }
+                }
+            }
+            JSONArray dl = vd.optJSONArray("directionList");
+            if (dl != null) {
+                for (int i = 0; i < dl.length(); i++) {
+                    JSONObject d = dl.optJSONObject(i);
+                    if (d != null && controlId.equals(d.optString("id"))) {
+                        return d;
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
+    /** Persist the (possibly edited) controller JSON to files/fcl_controllers/<id>.json. */
+    public boolean saveToFile(Context context) {
+        try {
+            java.io.File dir = new java.io.File(context.getFilesDir(), ASSET_DIR);
+            if (!dir.isDirectory() && !dir.mkdirs()) {
+                return false;
+            }
+            java.io.File out = new java.io.File(dir, id + ".json");
+            try (FileOutputStream fos = new FileOutputStream(out)) {
+                fos.write(root.toString(2).getBytes(StandardCharsets.UTF_8));
+            }
+            return true;
+        } catch (IOException | JSONException e) {
+            Log.e(TAG, "save controller " + id + " failed", e);
+            return false;
+        }
+    }
+
+    /** True when this controller is a bundled asset (no editable copy on disk). */
+    public boolean isBundled(Context context) {
+        return !new java.io.File(context.getFilesDir(), ASSET_DIR + "/" + id + ".json").isFile();
+    }
+
+    /** Create a new controller profile as a copy of an existing one. Returns the new id. */
+    public static String createCopy(Context context, FclController source, String newName) {
+        try {
+            JSONObject copy = new JSONObject(source.root.toString());
+            String newId = String.format(java.util.Locale.US, "%08x",
+                    new java.util.Random().nextInt(0x10000000));
+            copy.put("id", newId);
+            copy.put("name", newName == null || newName.trim().isEmpty()
+                    ? source.name : newName.trim());
+            return parse(copy).saveToFile(context) ? newId : null;
+        } catch (JSONException e) {
+            Log.e(TAG, "create controller copy failed", e);
+            return null;
+        }
+    }
+
+    /** Delete an imported controller profile. Bundled assets cannot be deleted. */
+    public static boolean deleteFromDisk(Context context, String id) {
+        return new java.io.File(context.getFilesDir(), ASSET_DIR + "/" + id + ".json").delete();
     }
 
     // ---------------------------------------------------------------- styles
@@ -426,6 +513,9 @@ public final class FclController {
         public final ButtonStyle style;
         public final BaseInfo baseInfo;
         public final boolean pointerFollow;
+        /** Anland extension: holding this key and dragging moves the mouse.
+         *  Default off; absent means off, so FCL imports stay fully compatible. */
+        public final boolean dragMoveMouse;
         public final boolean movable;
         public final Event pressEvent;
         public final Event longPressEvent;
@@ -433,7 +523,7 @@ public final class FclController {
         public final Event doubleClickEvent;
 
         private Button(String id, String text, ButtonStyle style, BaseInfo baseInfo,
-                       boolean pointerFollow, boolean movable,
+                       boolean pointerFollow, boolean dragMoveMouse, boolean movable,
                        Event pressEvent, Event longPressEvent, Event clickEvent,
                        Event doubleClickEvent) {
             this.id = id;
@@ -441,6 +531,7 @@ public final class FclController {
             this.style = style;
             this.baseInfo = baseInfo;
             this.pointerFollow = pointerFollow;
+            this.dragMoveMouse = dragMoveMouse;
             this.movable = movable;
             this.pressEvent = pressEvent;
             this.longPressEvent = longPressEvent;
@@ -461,6 +552,7 @@ public final class FclController {
                             new PercentageSize("SCREEN_HEIGHT", 120),
                             new PercentageSize("SCREEN_HEIGHT", 120)),
                     ev != null && ev.optBoolean("pointerFollow", false),
+                    ev != null && ev.optBoolean("dragMoveMouse", false),
                     ev != null && ev.optBoolean("Movable", false),
                     Event.fromJson(ev != null ? ev.optJSONObject("pressEvent") : null),
                     Event.fromJson(ev != null ? ev.optJSONObject("longPressEvent") : null),
