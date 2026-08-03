@@ -1001,11 +1001,14 @@ public class MainActivity extends Activity
         if (action == MotionEvent.ACTION_MOVE || action == MotionEvent.ACTION_HOVER_MOVE) {
             // Relative mouse samples can be batched.  Consume every historical
             // sample so fast movements do not lose deltas between frames.
+            // Same acceleration curve as the touchpads: a Bluetooth mouse is
+            // SOURCE_MOUSE_RELATIVE, and without this it would bypass the
+            // sensitivity setting entirely.
             for (int i = 0; i < event.getHistorySize(); i++) {
-                movePointerBy(event.getHistoricalX(0, i),
+                sendCapturedTouchpadMotion(event.getHistoricalX(0, i),
                         event.getHistoricalY(0, i));
             }
-            movePointerBy(event.getX(), event.getY());
+            sendCapturedTouchpadMotion(event.getX(), event.getY());
         }
 
         if (action == MotionEvent.ACTION_SCROLL) {
