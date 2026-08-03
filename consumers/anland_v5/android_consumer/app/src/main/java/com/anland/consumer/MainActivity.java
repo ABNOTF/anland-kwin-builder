@@ -839,9 +839,6 @@ public class MainActivity extends Activity
     /** Add the FCL overlay as a separate window above the activity window. */
     private void showFclOverlayWindow() {
         if (fclControllerView == null || fclWindowManager == null) return;
-        // Never show while the system IME is open; it is restored by
-        // onImeVisibilityChanged(false) when the IME closes.
-        if (systemIme.isImeVisible()) return;
         if (!fclWindowAdded) {
             View decor = getWindow().getDecorView();
             android.os.IBinder token = decor != null ? decor.getWindowToken() : null;

@@ -263,17 +263,16 @@ public class FclControllerView extends FrameLayout {
         editButton.setText(editMode ? "完成" : "编辑");
         addButton.setText("新增");
         deleteButton.setText("删除");
-        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.WRAP_CONTENT,
-                FrameLayout.LayoutParams.WRAP_CONTENT,
-                Gravity.TOP | Gravity.START);
         for (Button b : new Button[]{editButton, addButton, deleteButton}) {
             b.setTextSize(11);
             b.setAllCaps(false);
             b.setPadding(dp(8), dp(2), dp(8), dp(2));
             b.setBackgroundColor(0x99000000);
             b.setTextColor(0xFFFFFFFF);
-            addView(b, lp);
+            addView(b, new FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.WRAP_CONTENT,
+                    FrameLayout.LayoutParams.WRAP_CONTENT,
+                    Gravity.TOP | Gravity.START));
         }
         // Chain the three buttons along the top edge once they are measured.
         post(() -> {
