@@ -148,10 +148,11 @@ public class MainActivity extends Activity
     // FCL controller overlay (hidden until toggled / enabled in Settings).
     private FclControllerView fclControllerView;
     private boolean mFclHiddenByBack = false;
-    // Set while the FCL overlay is hidden because the system IME is open, so it
-    // can be restored when the IME closes by any means (toggle, system Back, or
-    // the IME's own close button).
-    private boolean mFclHiddenForIme = false;
+    // Editor dialogs are ordinary app windows below the FCL application panel,
+    // so the panel is temporarily suppressed only while such a dialog is open.
+    // The system IME is deliberately not included here: changing the panel on
+    // every IME transition is the source of the visible black flash on some GPUs.
+    private boolean mFclHiddenForDialog = false;
     private WindowManager fclWindowManager;
     private boolean fclWindowAdded = false;
     private int fclWindowRetries = 0;
@@ -279,7 +280,8 @@ public class MainActivity extends Activity
         super.onWindowFocusChanged(hasFocus);
         // Once the activity window is attached (focus gained), create the FCL
         // overlay window if it is supposed to be visible.
-        if (hasFocus && fclControllerView != null && isFclBottomMode()) {
+        if (hasFocus && fclControllerView != null && isFclBottomMode()
+                && !mFclHiddenForDialog) {
             showFclOverlayWindow();
         }
         if (!isSocketFile(resolveSocketPath())) {
@@ -481,10 +483,11 @@ public class MainActivity extends Activity
         clipboard = new Clipboard(this, mNative);
 
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
-        getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN);
-        // Take over inset handling: the IME insets are dispatched to our
-        // OnApplyWindowInsetsListener (so we can resize the surface) instead of
-        // the system auto-panning the fullscreen window.
+        getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN
+                | WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING);
+        // Take over inset handling. Android must not resize the SurfaceView on an
+        // IME animation: a Surface resize restarts the native compositor and can
+        // produce a black frame. relayout() applies a manual margin when needed.
         getWindow().setDecorFitsSystemWindows(false);
 
         surfaceView = new SurfaceView(this);
@@ -600,8 +603,9 @@ public class MainActivity extends Activity
             // neither visually covered nor touch-blocked, then restore it.
             @Override public void setEditorDialogOpen(boolean open) {
                 if (open) {
-                    hideFclControllerForIme();
-                } else if (isFclBottomMode() && fclControllerView != null) {
+                    hideFclControllerForDialog();
+                } else if (isFclBottomMode() && fclControllerView != null
+                        && mFclHiddenForDialog) {
                     showFclOverlayWindow();
                 }
             }
@@ -661,9 +665,10 @@ public class MainActivity extends Activity
                 systemIme.releaseHiddenInput();
                 if (focused == systemIme.getInputView() || getCurrentFocus() == null)
                     surfaceView.requestFocus();
-                // Restore the FCL overlay that was hidden while the IME was open.
-                // The toggle path already does this, but system Back / the IME's
-                // own close button only surface here.
+                // System Back / an IME-owned close button do not go through
+                // SystemIME.toggleSystemKeyboard(), so still notify the host to
+                // sync the extra-keys bar and pointer focus. FCL itself remains
+                // untouched during IME changes (see onImeVisibilityChanged()).
                 if (mImeBottom > 0)
                     onImeVisibilityChanged(false);
             }
@@ -847,12 +852,13 @@ public class MainActivity extends Activity
         fclControllerView.releaseAll();
         fclControllerView.setVisibility(View.GONE);
         removeFclOverlayWindow();
-        mFclHiddenForIme = false;
+        mFclHiddenForDialog = false;
     }
 
     /** Add the FCL overlay as a separate window above the activity window. */
     private void showFclOverlayWindow() {
         if (fclControllerView == null || fclWindowManager == null) return;
+        boolean newlyAdded = false;
         if (!fclWindowAdded) {
             View decor = getWindow().getDecorView();
             android.os.IBinder token = decor != null ? decor.getWindowToken() : null;
@@ -873,6 +879,11 @@ public class MainActivity extends Activity
                     WindowManager.LayoutParams.TYPE_APPLICATION_PANEL,
                     WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
                             | WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
+                            // Keep this non-focusable application panel below the
+                            // Android IME. Without ALT_FOCUSABLE_IM it is ordered
+                            // above the keyboard, which was why older code hid and
+                            // re-showed the panel on every IME transition.
+                            | WindowManager.LayoutParams.FLAG_ALT_FOCUSABLE_IM
                             | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
                     PixelFormat.TRANSLUCENT);
             lp.token = token;
@@ -880,43 +891,53 @@ public class MainActivity extends Activity
             try {
                 fclWindowManager.addView(fclControllerView, lp);
                 fclWindowAdded = true;
+                newlyAdded = true;
                 Log.d(TAG, "FCL overlay window added");
             } catch (Exception e) {
                 Log.e(TAG, "add FCL overlay window failed", e);
                 return;
             }
         }
-        fclControllerView.rebuild();
-        fclControllerView.setVisibility(View.VISIBLE);
-        mFclHiddenForIme = false;
+        // An IME focus transition can call onWindowFocusChanged(). Rebuilding an
+        // already-visible full-screen panel there briefly leaves the remote Surface
+        // without a composed frame, so rebuild only after a genuinely new attach.
+        if (newlyAdded) {
+            fclControllerView.rebuild();
+        }
+        boolean wasVisible = fclControllerView.getVisibility() == View.VISIBLE;
+        if (!wasVisible) {
+            fclControllerView.setVisibility(View.VISIBLE);
+        }
+        mFclHiddenForDialog = false;
+        setFclOverlayTouchable(true);
+    }
+
+    private void setFclOverlayTouchable(boolean touchable) {
         if (fclWindowAdded && fclWindowManager != null) {
             try {
                 WindowManager.LayoutParams lp =
                         (WindowManager.LayoutParams) fclControllerView.getLayoutParams();
-                lp.flags &= ~WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE;
-                fclWindowManager.updateViewLayout(fclControllerView, lp);
+                int newFlags = touchable
+                        ? lp.flags & ~WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+                        : lp.flags | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE;
+                if (newFlags != lp.flags) {
+                    lp.flags = newFlags;
+                    fclWindowManager.updateViewLayout(fclControllerView, lp);
+                }
             } catch (Exception ignored) {
             }
         }
     }
 
-    /** Hide only the overlay content while the system IME is open: the window
-     *  stays in place so opening/closing the keyboard does not tear it down and
-     *  flash black. */
-    private void hideFclControllerForIme() {
+    /** Hide only the overlay content while an editor dialog is open. Unlike the
+     *  system IME, editor dialogs share the app window layer and would otherwise
+     *  be covered by the application-panel overlay. */
+    private void hideFclControllerForDialog() {
         if (fclControllerView == null) return;
         fclControllerView.releaseAll();
         fclControllerView.setVisibility(View.INVISIBLE);
-        if (fclWindowAdded && fclWindowManager != null) {
-            try {
-                WindowManager.LayoutParams lp =
-                        (WindowManager.LayoutParams) fclControllerView.getLayoutParams();
-                lp.flags |= WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE;
-                fclWindowManager.updateViewLayout(fclControllerView, lp);
-            } catch (Exception ignored) {
-            }
-        }
-        mFclHiddenForIme = true;
+        setFclOverlayTouchable(false);
+        mFclHiddenForDialog = true;
     }
 
     /** True when the FCL controller is the selected bottom overlay. */
@@ -2011,8 +2032,11 @@ public class MainActivity extends Activity
         boolean barVisible = extraKeysBar != null && extraKeysBar.getVisibility() == View.VISIBLE;
         int barH = barVisible ? mBarHeight : 0;
         // Floating mode: keyboard + bar overlay the display, so the surface keeps
-        // its full size (target 0). Default mode: shrink the surface above both.
-        int target = mKeyboardFloating ? 0 : (mImeBottom + barH);
+        // its full size (target 0). FCL mode follows the same rule even if the
+        // user disabled floating keyboard: resizing the native Surface for every
+        // IME transition produces a black compositor frame on affected devices.
+        // The traditional extra-keys mode still shrinks above keyboard + bar.
+        int target = (mKeyboardFloating || isFclBottomMode()) ? 0 : (mImeBottom + barH);
 
         FrameLayout.LayoutParams lp =
             (FrameLayout.LayoutParams) surfaceView.getLayoutParams();
@@ -2190,22 +2214,10 @@ public class MainActivity extends Activity
     // callback may not fire, so sync the extra-keys bar explicitly here in all modes.
     @Override
     public void onImeVisibilityChanged(boolean visible) {
-        // While the system IME is open, hide the FCL overlay (keeping its window
-        // in place so no teardown flash occurs); it is restored on close.
-        if (visible) {
-            if (fclControllerView != null
-                    && fclControllerView.getVisibility() == View.VISIBLE) {
-                hideFclControllerForIme();
-            }
-        } else if (isFclBottomMode()) {
-            boolean hiddenForIme = mFclHiddenForIme
-                    || (fclWindowAdded && fclControllerView != null
-                        && fclControllerView.getVisibility() != View.VISIBLE);
-            if (hiddenForIme) {
-                mFclHiddenForIme = false;
-                showFclOverlayWindow();
-            }
-        }
+        // Keep the FCL application panel completely stable while the Android IME
+        // opens/closes. TYPE_INPUT_METHOD is above TYPE_APPLICATION_PANEL, so the
+        // keyboard owns the covered area without us toggling visibility or window
+        // flags. Those mutations were the remaining source of the black flash.
         String mode = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
                 .getString(KEY_EXTRA_KEYS_MODE, "always");
         if ("with_keyboard".equals(mode))
