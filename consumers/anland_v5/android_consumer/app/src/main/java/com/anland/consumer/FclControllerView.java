@@ -1395,15 +1395,23 @@ public class FclControllerView extends FrameLayout {
             root.addView(bottom);
 
             android.app.Dialog dialog = new android.app.Dialog(getContext());
+            int dialogW = Math.min(dp(500),
+                    getResources().getDisplayMetrics().widthPixels - dp(24));
+            dialog.setContentView(root, new android.view.ViewGroup.LayoutParams(
+                    dialogW, android.view.ViewGroup.LayoutParams.MATCH_PARENT));
             if (dialog.getWindow() != null) {
                 dialog.getWindow().setBackgroundDrawable(
                         new android.graphics.drawable.ColorDrawable(0));
-                int maxW = getResources().getDisplayMetrics().widthPixels;
-                int w = Math.min(dp(500), maxW - dp(24));
-                dialog.getWindow().setLayout(w,
+                dialog.getWindow().setGravity(Gravity.CENTER);
+                dialog.getWindow().setLayout(dialogW,
                         android.view.ViewGroup.LayoutParams.MATCH_PARENT);
             }
-            dialog.setContentView(root);
+            dialog.setOnShowListener(d -> {
+                if (dialog.getWindow() != null) {
+                    dialog.getWindow().setLayout(dialogW,
+                            android.view.ViewGroup.LayoutParams.MATCH_PARENT);
+                }
+            });
             okBtn.setOnClickListener(v -> {
                 for (int i = 0; i < 4; i++) {
                     evText[i] = evTextInputs[i].getText().toString();
@@ -2043,15 +2051,23 @@ public class FclControllerView extends FrameLayout {
             ScrollView scroll = new ScrollView(getContext());
             scroll.addView(root);
             android.app.Dialog dialog = new android.app.Dialog(getContext());
+            int dialogW = Math.min(dp(500),
+                    getResources().getDisplayMetrics().widthPixels - dp(24));
+            dialog.setContentView(scroll, new android.view.ViewGroup.LayoutParams(
+                    dialogW, android.view.ViewGroup.LayoutParams.MATCH_PARENT));
             if (dialog.getWindow() != null) {
                 dialog.getWindow().setBackgroundDrawable(
                         new android.graphics.drawable.ColorDrawable(0));
-                int maxW = getResources().getDisplayMetrics().widthPixels;
-                int w = Math.min(dp(500), maxW - dp(24));
-                dialog.getWindow().setLayout(w,
+                dialog.getWindow().setGravity(Gravity.CENTER);
+                dialog.getWindow().setLayout(dialogW,
                         android.view.ViewGroup.LayoutParams.MATCH_PARENT);
             }
-            dialog.setContentView(scroll);
+            dialog.setOnShowListener(d -> {
+                if (dialog.getWindow() != null) {
+                    dialog.getWindow().setLayout(dialogW,
+                            android.view.ViewGroup.LayoutParams.MATCH_PARENT);
+                }
+            });
             okBtn.setOnClickListener(v -> {
                 saveDirectionJson(
                         xInput.getText().toString(),
