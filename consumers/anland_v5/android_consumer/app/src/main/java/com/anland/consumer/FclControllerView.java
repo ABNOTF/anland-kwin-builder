@@ -10,6 +10,7 @@ import android.os.Looper;
 import android.text.TextPaint;
 import android.view.MotionEvent;
 import android.view.View;
+import android.view.ViewConfiguration;
 import android.widget.FrameLayout;
 
 import org.json.JSONArray;
@@ -54,7 +55,7 @@ public class FclControllerView extends FrameLayout {
         void key(int action, int evdev);                    // 0 = down, 1 = up
         void mouseButton(int button, boolean pressed);
         void mouseMove(float dx, float dy);
-        void mouseScroll(int axis, float value);
+        void mouseScroll(int axis, float value, int discrete);
         void text(String text);
         void toggleIme();
         void toggleVirtualKeyboard();
@@ -82,7 +83,11 @@ public class FclControllerView extends FrameLayout {
     private SurfaceTouchForwarder surfaceForwarder;
     private final List<View> passThroughViews = new ArrayList<>();
     private final Map<View, Integer> controlPointers = new HashMap<>();
-    private boolean surfaceDown = false;
+    // The single surface (desktop/touchpad) pointer, if one is being tracked.
+    // A pointer keeps the role it was assigned on DOWN for its whole lifetime:
+    // a control pointer is never also forwarded to the surface, and vice versa,
+    // so a finger that slides off a button cannot fight the touchpad finger.
+    private int surfacePointerId = -1;
 
     // Position overrides: control id -> [x thousandths, y thousandths].
     // Saved overrides survive rebuilds; pending ones only exist while editing.
@@ -306,11 +311,9 @@ public class FclControllerView extends FrameLayout {
                         dispatchControl(e.getKey(), ev, MotionEvent.ACTION_MOVE, pi);
                     }
                 }
-                if (surfaceDown) {
-                    int si = firstSurfacePointer(ev);
-                    if (si >= 0) {
-                        forwardSurface(ev, MotionEvent.ACTION_MOVE, si);
-                    }
+                int si = pointerIndex(ev, surfacePointerId);
+                if (si >= 0) {
+                    forwardSurface(ev, MotionEvent.ACTION_MOVE, si);
                 }
                 break;
 
@@ -321,9 +324,9 @@ public class FclControllerView extends FrameLayout {
                 if (mapped != null) {
                     dispatchControl(mapped, ev, MotionEvent.ACTION_UP, idx);
                     controlPointers.remove(mapped);
-                } else if (surfaceDown) {
+                } else if (ev.getPointerId(idx) == surfacePointerId) {
                     forwardSurface(ev, MotionEvent.ACTION_UP, idx);
-                    surfaceDown = false;
+                    surfacePointerId = -1;
                 }
                 break;
 
@@ -333,19 +336,19 @@ public class FclControllerView extends FrameLayout {
                     dispatchControl(e.getKey(), ev, MotionEvent.ACTION_CANCEL, Math.max(0, pi));
                 }
                 controlPointers.clear();
-                if (surfaceDown) {
+                if (surfacePointerId >= 0) {
                     forwardSurface(ev, MotionEvent.ACTION_CANCEL, idx);
-                    surfaceDown = false;
+                    surfacePointerId = -1;
                 }
                 break;
         }
     }
 
     private void surfacePointerDown(MotionEvent ev, int idx) {
-        if (surfaceDown) {
+        if (surfacePointerId >= 0) {
             return; // a second surface finger is not tracked while controls are active
         }
-        surfaceDown = true;
+        surfacePointerId = ev.getPointerId(idx);
         forwardSurface(ev, MotionEvent.ACTION_DOWN, idx);
     }
 
@@ -381,15 +384,6 @@ public class FclControllerView extends FrameLayout {
             }
         }
         return null;
-    }
-
-    private int firstSurfacePointer(MotionEvent ev) {
-        for (int i = 0; i < ev.getPointerCount(); i++) {
-            if (controlAt(ev.getX(i), ev.getY(i)) == null) {
-                return i;
-            }
-        }
-        return -1;
     }
 
     private View controlAt(float x, float y) {
@@ -553,15 +547,26 @@ public class FclControllerView extends FrameLayout {
     // ======================================================================
 
     private final class FclButtonView extends View {
+        private static final int EVENT_PRESS = 0;
+        private static final int EVENT_LONG_PRESS = 1;
+        private static final int EVENT_CLICK = 2;
+        private static final int EVENT_DOUBLE_CLICK = 3;
+
         private final FclController.Button data;
         private final Paint fillPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Paint strokePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final TextPaint textPaint = new TextPaint(Paint.ANTI_ALIAS_FLAG);
         private final RectF rect = new RectF();
+        // Movement dead zone for pointer-follow: a tap's micro-jitter must not
+        // move the host cursor (it would drift the camera right before a click).
+        private final float touchSlop;
 
         private boolean pressed = false;
         private boolean moved = false;
         private boolean longPressFired = false;
+        // Set once the finger has clearly travelled past touchSlop; from then on
+        // every MOVE is emitted, so slow drags stay smooth instead of chunking.
+        private boolean pointerFollowActive = false;
         private float downX, downY;
         private long downTime;
         private int clickCount = 0;
@@ -569,6 +574,10 @@ public class FclControllerView extends FrameLayout {
 
         private FclController.Event autoClickEvent;
         private boolean autoClickRunning = false;
+        // Auto-keep (latch) state per event kind, matching FCL: the first press
+        // latches the key and keeps the pressed (red) style; the next press
+        // releases it and restores the normal style.
+        private final boolean[] keepActive = new boolean[4];
         private final Runnable autoClickRunnable = new Runnable() {
             @Override
             public void run() {
@@ -587,13 +596,19 @@ public class FclControllerView extends FrameLayout {
             @Override
             public void run() {
                 longPressFired = true;
-                trigger(data.longPressEvent, true, false);
+                trigger(data.longPressEvent, true, false, EVENT_LONG_PRESS);
+                if (data.longPressEvent != null && data.longPressEvent.autoKeep
+                        && !keepActive[EVENT_LONG_PRESS]) {
+                    pressed = false;
+                }
+                invalidate();
             }
         };
 
         FclButtonView(Context context, FclController.Button data) {
             super(context);
             this.data = data;
+            this.touchSlop = ViewConfiguration.get(context).getScaledTouchSlop();
             setClickable(true);
             setWillNotDraw(false);
             strokePaint.setStyle(Paint.Style.STROKE);
@@ -646,26 +661,40 @@ public class FclControllerView extends FrameLayout {
             }
             switch (event.getActionMasked()) {
                 case MotionEvent.ACTION_DOWN:
-                    pressed = true;
-                    invalidate();
                     downX = event.getX();
                     downY = event.getY();
                     downTime = System.currentTimeMillis();
                     moved = false;
                     longPressFired = false;
-                    trigger(data.pressEvent, true, false);
+                    pointerFollowActive = false;
+                    trigger(data.pressEvent, true, false, EVENT_PRESS);
+                    pressed = true;
+                    // A second press toggles an auto-keep latch off; do not show
+                    // the pressed style for that release tap.
+                    if (data.pressEvent != null && data.pressEvent.autoKeep
+                            && !keepActive[EVENT_PRESS]) {
+                        pressed = false;
+                    }
+                    invalidate();
                     handler.postDelayed(longPressRunnable, LONG_PRESS_MS);
                     return true;
 
                 case MotionEvent.ACTION_MOVE:
                     float dx = event.getX() - downX;
                     float dy = event.getY() - downY;
-                    if (Math.abs(dx) > 2 || Math.abs(dy) > 2) {
+                    if (!pointerFollowActive
+                            && (Math.abs(dx) > touchSlop || Math.abs(dy) > touchSlop)) {
+                        // Confirmed drag: drop the pre-slop travel so the first
+                        // emitted delta is small, then stream every frame.
+                        pointerFollowActive = true;
                         moved = true;
                         handler.removeCallbacks(longPressRunnable);
+                        downX = event.getX();
+                        downY = event.getY();
                     }
-                    if (data.pointerFollow) {
-                        bridge.mouseMove(dx * mouseSensitivity, dy * mouseSensitivity);
+                    if (pointerFollowActive && data.pointerFollow) {
+                        bridge.mouseMove((event.getX() - downX) * mouseSensitivity,
+                                (event.getY() - downY) * mouseSensitivity);
                         downX = event.getX();
                         downY = event.getY();
                     }
@@ -681,20 +710,20 @@ public class FclControllerView extends FrameLayout {
                 case MotionEvent.ACTION_CANCEL:
                     handler.removeCallbacks(longPressRunnable);
                     if (longPressFired) {
-                        releaseEvent(data.longPressEvent, false);
+                        releaseEvent(data.longPressEvent, false, EVENT_LONG_PRESS);
                         longPressFired = false;
                     }
-                    releaseEvent(data.pressEvent, false);
+                    releaseEvent(data.pressEvent, false, EVENT_PRESS);
 
                     boolean tap = !moved && System.currentTimeMillis() - downTime <= 100;
                     if (tap) {
-                        trigger(data.clickEvent, true, true);
+                        trigger(data.clickEvent, true, true, EVENT_CLICK);
                         clickCount++;
                         if (clickCount == 1) {
                             firstClickTime = System.currentTimeMillis();
                         } else if (clickCount == 2) {
                             if (System.currentTimeMillis() - firstClickTime < 400) {
-                                trigger(data.doubleClickEvent, true, true);
+                                trigger(data.doubleClickEvent, true, true, EVENT_DOUBLE_CLICK);
                             } else {
                                 clickCount = 1;
                                 firstClickTime = System.currentTimeMillis();
@@ -702,7 +731,7 @@ public class FclControllerView extends FrameLayout {
                             clickCount = 0;
                         }
                     }
-                    pressed = false;
+                    pressed = anyKeepActive();
                     invalidate();
                     return true;
             }
@@ -743,15 +772,27 @@ public class FclControllerView extends FrameLayout {
             return true;
         }
 
-        private void trigger(FclController.Event ev, boolean enable, boolean clickType) {
+        private void trigger(FclController.Event ev, boolean enable, boolean clickType,
+                             int eventType) {
             if (ev == null || !enable) {
                 return;
             }
             if (ev.autoKeep) {
-                if (ev.autoClick) {
-                    startAutoClick(ev);
+                if (keepActive[eventType]) {
+                    // Already latched: this press releases it again (toggle off).
+                    keepActive[eventType] = false;
+                    if (ev.autoClick) {
+                        stopAutoClick();
+                    } else {
+                        keyUp(ev);
+                    }
                 } else {
-                    keyDown(ev);
+                    keepActive[eventType] = true;
+                    if (ev.autoClick) {
+                        startAutoClick(ev);
+                    } else {
+                        keyDown(ev);
+                    }
                 }
             } else if (ev.autoClick) {
                 startAutoClick(ev);
@@ -764,16 +805,29 @@ public class FclControllerView extends FrameLayout {
             sideEffects(ev);
         }
 
-        private void releaseEvent(FclController.Event ev, boolean force) {
+        private void releaseEvent(FclController.Event ev, boolean force, int eventType) {
             if (ev == null) {
                 return;
             }
-            if (ev.autoClick) {
-                stopAutoClick();
-            }
             if (force || !ev.autoKeep) {
-                keyUp(ev);
+                if (ev.autoClick) {
+                    stopAutoClick();
+                }
+                // For a latched event only send the release when it is actually
+                // held; otherwise a force-cleanup could lift a key that another
+                // control is still pressing.
+                if (!ev.autoKeep || keepActive[eventType]) {
+                    keyUp(ev);
+                }
             }
+            if (force) {
+                keepActive[eventType] = false;
+            }
+        }
+
+        private boolean anyKeepActive() {
+            return keepActive[EVENT_PRESS] || keepActive[EVENT_LONG_PRESS]
+                    || keepActive[EVENT_CLICK] || keepActive[EVENT_DOUBLE_CLICK];
         }
 
         private void sideEffects(FclController.Event ev) {
@@ -821,12 +875,12 @@ public class FclControllerView extends FrameLayout {
             handler.removeCallbacks(longPressRunnable);
             stopAutoClick();
             if (longPressFired) {
-                releaseEvent(data.longPressEvent, true);
+                releaseEvent(data.longPressEvent, true, EVENT_LONG_PRESS);
                 longPressFired = false;
             }
-            releaseEvent(data.pressEvent, true);
-            releaseEvent(data.clickEvent, true);
-            releaseEvent(data.doubleClickEvent, true);
+            releaseEvent(data.pressEvent, true, EVENT_PRESS);
+            releaseEvent(data.clickEvent, true, EVENT_CLICK);
+            releaseEvent(data.doubleClickEvent, true, EVENT_DOUBLE_CLICK);
             pressed = false;
             clickCount = 0;
             invalidate();
@@ -1196,9 +1250,9 @@ public class FclControllerView extends FrameLayout {
         } else if (code == FCL_MOUSE_RIGHT) {
             bridge.mouseButton(EV_BTN_RIGHT, down);
         } else if (code == FCL_MOUSE_SCROLL_UP) {
-            bridge.mouseScroll(0, down ? 1 : 0);
+            bridge.mouseScroll(0, down ? 10f : 0f, down ? 1 : 0);
         } else if (code == FCL_MOUSE_SCROLL_DOWN) {
-            bridge.mouseScroll(0, down ? -1 : 0);
+            bridge.mouseScroll(0, down ? -10f : 0f, down ? -1 : 0);
         } else {
             bridge.key(action, code);
         }

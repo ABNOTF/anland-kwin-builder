@@ -43,6 +43,7 @@ public class ExtraKeysBar extends GridLayout {
         void toggleKeyboard();          // toggle the system IME (soft keyboard)
         void toggleVirtualKeyboard();   // toggle the floating virtual keyboard
         void toggleFclController();     // toggle the FCL controller overlay
+        void toggleLandscape();         // toggle forced landscape orientation
         void openSettings();
     }
 
@@ -71,6 +72,7 @@ public class ExtraKeysBar extends GridLayout {
     private static final int TYPE_SETTINGS = 4;   // open settings
     private static final int TYPE_VKEYBOARD = 5;  // toggle floating virtual keyboard
     private static final int TYPE_FCL = 6;        // toggle FCL controller overlay
+    private static final int TYPE_LANDSCAPE = 7;  // toggle forced landscape orientation
 
     // Glyphs for icon-style keys.
     private static final String GLYPH_KEYBOARD = "⌨";  // ⌨
@@ -120,7 +122,8 @@ public class ExtraKeysBar extends GridLayout {
         "      {\"label\":\"⚙\",    \"type\":\"settings\"}\n" +
         "    ],\n" +
         "    [\n" +
-        "      {\"label\":\"FCL\",  \"type\":\"fcl\"}\n" +
+        "      {\"label\":\"FCL\",  \"type\":\"fcl\"},\n" +
+        "      {\"label\":\"横屏\", \"type\":\"landscape\"}\n" +
         "    ]\n" +
         "  ]\n" +
         "}\n";
@@ -151,6 +154,7 @@ public class ExtraKeysBar extends GridLayout {
         static Key kbd(String d, Key popup) { return new Key(d, TYPE_KEYBOARD, 0, null, false, popup); }
         static Key vkbd(String d) { return new Key(d, TYPE_VKEYBOARD, 0, null, false, null); }
         static Key fcl(String d) { return new Key(d, TYPE_FCL, 0, null, false, null); }
+        static Key landscape(String d) { return new Key(d, TYPE_LANDSCAPE, 0, null, false, null); }
         static Key settings(String d) { return new Key(d, TYPE_SETTINGS, 0, null, false, null); }
     }
 
@@ -168,6 +172,8 @@ public class ExtraKeysBar extends GridLayout {
 
     // modifier name ("CTRL"/"ALT"/"SHIFT") -> state
     private final Map<String, ModState> mModifiers = new LinkedHashMap<>();
+    // Landscape-toggle keys, highlighted while forced landscape is active.
+    private final List<Button> mOrientationButtons = new ArrayList<>();
 
     private PopupWindow mPopupWindow;
 
@@ -263,6 +269,7 @@ public class ExtraKeysBar extends GridLayout {
             },
             {
                 Key.fcl("FCL"),
+                Key.landscape("横屏"),
             },
         };
     }
@@ -297,6 +304,8 @@ public class ExtraKeysBar extends GridLayout {
                 return new Key(label, TYPE_VKEYBOARD, 0, null, false, popup);
             case "fcl":
                 return new Key(label, TYPE_FCL, 0, null, false, popup);
+            case "landscape":
+                return new Key(label, TYPE_LANDSCAPE, 0, null, false, popup);
             case "settings":
                 return new Key(label, TYPE_SETTINGS, 0, null, false, popup);
             case "key":
@@ -327,6 +336,9 @@ public class ExtraKeysBar extends GridLayout {
                         mModifiers.put(key.display, state);
                     }
                     state.buttons.add(button);
+                }
+                if (key.type == TYPE_LANDSCAPE) {
+                    mOrientationButtons.add(button);
                 }
 
                 GridLayout.LayoutParams param = new GridLayout.LayoutParams();
@@ -403,6 +415,9 @@ public class ExtraKeysBar extends GridLayout {
                 return;
             case TYPE_FCL:
                 mSender.toggleFclController();
+                return;
+            case TYPE_LANDSCAPE:
+                mSender.toggleLandscape();
                 return;
             case TYPE_SETTINGS:
                 mSender.openSettings();
@@ -554,5 +569,11 @@ public class ExtraKeysBar extends GridLayout {
         dismissPopup();
         for (ModState m : mModifiers.values())
             setModifierActive(m, false);
+    }
+
+    /** Highlight the landscape-toggle keys while forced landscape is active. */
+    public void setLandscapeActive(boolean active) {
+        for (Button b : mOrientationButtons)
+            b.setTextColor(active ? ACTIVE_TEXT_COLOR : TEXT_COLOR);
     }
 }

@@ -132,6 +132,10 @@ public class MainActivity extends Activity
     // FCL controller overlay (hidden until toggled / enabled in Settings).
     private FclControllerView fclControllerView;
     private boolean mFclHiddenByBack = false;
+    // Set while the FCL overlay is hidden because the system IME is open, so it
+    // can be restored when the IME closes by any means (toggle, system Back, or
+    // the IME's own close button).
+    private boolean mFclHiddenForIme = false;
     private WindowManager fclWindowManager;
     private boolean fclWindowAdded = false;
     private int fclWindowRetries = 0;
@@ -147,6 +151,9 @@ public class MainActivity extends Activity
     public static final String KEY_MOVE_THRESHOLD = "touchpad_move_threshold";
     // Magnifies declined gestures forwarded as touch; see Touchpad.setGestureScale.
     public static final String KEY_GESTURE_SCALE = "touchpad_gesture_scale";
+    // Quick force-landscape override (toggled by the bar's 横屏 key). While ON it
+    // beats the screen_orientation setting; OFF restores the setting's behaviour.
+    public static final String KEY_LANDSCAPE_FORCED = "landscape_forced";
     // Capture an external mouse/touchpad as a relative pointer so it cannot reach
     // the Android screen edges. This is deliberately opt-in: existing installations
     // keep the old absolute-pointer behaviour until the user enables it.
@@ -540,10 +547,10 @@ public class MainActivity extends Activity
                 if (mNative != null) mNative.sendMouseButton(button, pressed);
             }
             @Override public void mouseMove(float dx, float dy) {
-                if (mNative != null) mNative.sendMouseMotion(0f, 0f, dx, dy);
+                if (mNative != null) movePointerBy(dx, dy);
             }
-            @Override public void mouseScroll(int axis, float value) {
-                if (mNative != null) mNative.sendMouseScroll(axis, value);
+            @Override public void mouseScroll(int axis, float value, int discrete) {
+                if (mNative != null) mNative.sendMouseScroll(axis, value, discrete);
             }
             @Override public void text(String text) {
                 if (mNative != null && text != null && !text.isEmpty())
@@ -610,6 +617,11 @@ public class MainActivity extends Activity
                 systemIme.releaseHiddenInput();
                 if (focused == systemIme.getInputView() || getCurrentFocus() == null)
                     surfaceView.requestFocus();
+                // Restore the FCL overlay that was hidden while the IME was open.
+                // The toggle path already does this, but system Back / the IME's
+                // own close button only surface here.
+                if (mImeBottom > 0)
+                    onImeVisibilityChanged(false);
             }
             applyImeInset(insets);
             return v.onApplyWindowInsets(insets);
@@ -775,11 +787,15 @@ public class MainActivity extends Activity
         fclControllerView.releaseAll();
         fclControllerView.setVisibility(View.GONE);
         removeFclOverlayWindow();
+        mFclHiddenForIme = false;
     }
 
     /** Add the FCL overlay as a separate window above the activity window. */
     private void showFclOverlayWindow() {
         if (fclControllerView == null || fclWindowManager == null) return;
+        // Never show while the system IME is open; it is restored by
+        // onImeVisibilityChanged(false) when the IME closes.
+        if (systemIme.isImeVisible()) return;
         if (!fclWindowAdded) {
             View decor = getWindow().getDecorView();
             android.os.IBinder token = decor != null ? decor.getWindowToken() : null;
@@ -815,6 +831,34 @@ public class MainActivity extends Activity
         }
         fclControllerView.rebuild();
         fclControllerView.setVisibility(View.VISIBLE);
+        if (fclWindowAdded && fclWindowManager != null) {
+            try {
+                WindowManager.LayoutParams lp =
+                        (WindowManager.LayoutParams) fclControllerView.getLayoutParams();
+                lp.flags &= ~WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE;
+                fclWindowManager.updateViewLayout(fclControllerView, lp);
+            } catch (Exception ignored) {
+            }
+        }
+    }
+
+    /** Hide only the overlay content while the system IME is open: the window
+     *  stays in place so opening/closing the keyboard does not tear it down and
+     *  flash black. */
+    private void hideFclControllerForIme() {
+        if (fclControllerView == null) return;
+        fclControllerView.releaseAll();
+        fclControllerView.setVisibility(View.INVISIBLE);
+        if (fclWindowAdded && fclWindowManager != null) {
+            try {
+                WindowManager.LayoutParams lp =
+                        (WindowManager.LayoutParams) fclControllerView.getLayoutParams();
+                lp.flags |= WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE;
+                fclWindowManager.updateViewLayout(fclControllerView, lp);
+            } catch (Exception ignored) {
+            }
+        }
+        mFclHiddenForIme = true;
     }
 
     /** True when the FCL controller is the selected bottom overlay. */
@@ -1172,9 +1216,9 @@ public class MainActivity extends Activity
             float vScroll = event.getAxisValue(MotionEvent.AXIS_VSCROLL);
             float hScroll = event.getAxisValue(MotionEvent.AXIS_HSCROLL);
             if (vScroll != 0f)
-                mNative.sendMouseScroll(0, -vScroll * 10f);
+                mNative.sendMouseScroll(0, -vScroll * 10f, discreteOf(-vScroll));
             if (hScroll != 0f)
-                mNative.sendMouseScroll(1, hScroll * 10f);
+                mNative.sendMouseScroll(1, hScroll * 10f, discreteOf(hScroll));
         }
 
         // Button state is present on motion, button, and down/up events.  Keeping
@@ -1434,9 +1478,9 @@ public class MainActivity extends Activity
                 0, historyPos);
         if (vScroll != 0f || hScroll != 0f) {
             if (vScroll != 0f)
-                mNative.sendMouseScroll(0, -vScroll * 10f);
+                mNative.sendMouseScroll(0, -vScroll * 10f, discreteOf(-vScroll));
             if (hScroll != 0f)
-                mNative.sendMouseScroll(1, hScroll * 10f);
+                mNative.sendMouseScroll(1, hScroll * 10f, discreteOf(hScroll));
             return;
         }
 
@@ -1921,10 +1965,14 @@ public class MainActivity extends Activity
             @Override public void toggleVirtualKeyboard() { toggleFloatingVirtualKeyboard(); }
             // The FCL key toggles the FoldCraftLauncher controller overlay.
             @Override public void toggleFclController() { toggleFclControllerOverlay(); }
+            // The 横屏 key force-locks the app to landscape; tap again to restore.
+            @Override public void toggleLandscape() { toggleLandscapeForced(); }
             @Override public void openSettings() {
                 startActivity(new Intent(MainActivity.this, SettingsActivity.class));
             }
         });
+        extraKeysBar.setLandscapeActive(getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+                .getBoolean(KEY_LANDSCAPE_FORCED, false));
         mBarHeight = Math.round(37.5f * mDensity * extraKeysBar.getRowCount());
         extraKeysBar.setFloating(mKeyboardFloating);
         extraKeysBar.setVisibility(View.GONE);
@@ -1959,8 +2007,13 @@ public class MainActivity extends Activity
 
     // Apply the screen-orientation preference (default / landscape / portrait).
     private void applyOrientation() {
-        String mode = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
-            .getString("screen_orientation", "default");
+        SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+        // The quick force-landscape toggle wins over the saved setting.
+        if (prefs.getBoolean(KEY_LANDSCAPE_FORCED, false)) {
+            setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
+            return;
+        }
+        String mode = prefs.getString("screen_orientation", "default");
         switch (mode) {
             case "landscape":
                 setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
@@ -1974,6 +2027,16 @@ public class MainActivity extends Activity
         }
     }
 
+    /** Flip the quick force-landscape override and apply it immediately. */
+    private void toggleLandscapeForced() {
+        SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+        boolean forced = !prefs.getBoolean(KEY_LANDSCAPE_FORCED, false);
+        prefs.edit().putBoolean(KEY_LANDSCAPE_FORCED, forced).apply();
+        applyOrientation();
+        if (extraKeysBar != null)
+            extraKeysBar.setLandscapeActive(forced);
+    }
+
     // ---- SystemIME.Host ----
 
     @Override
@@ -1985,13 +2048,21 @@ public class MainActivity extends Activity
     // callback may not fire, so sync the extra-keys bar explicitly here in all modes.
     @Override
     public void onImeVisibilityChanged(boolean visible) {
-        // While the system IME is open, remove the FCL overlay window: the
-        // floating window interferes with IME input and causes a black flash.
-        // It is restored when the IME closes.
+        // While the system IME is open, hide the FCL overlay (keeping its window
+        // in place so no teardown flash occurs); it is restored on close.
         if (visible) {
-            hideFclController();
+            if (fclControllerView != null
+                    && fclControllerView.getVisibility() == View.VISIBLE) {
+                hideFclControllerForIme();
+            }
         } else if (isFclBottomMode()) {
-            showFclOverlayWindow();
+            boolean hiddenForIme = mFclHiddenForIme
+                    || (fclWindowAdded && fclControllerView != null
+                        && fclControllerView.getVisibility() != View.VISIBLE);
+            if (hiddenForIme) {
+                mFclHiddenForIme = false;
+                showFclOverlayWindow();
+            }
         }
         String mode = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
                 .getString(KEY_EXTRA_KEYS_MODE, "always");
@@ -2073,9 +2144,9 @@ public class MainActivity extends Activity
                 float vScroll = event.getAxisValue(MotionEvent.AXIS_VSCROLL);
                 float hScroll = event.getAxisValue(MotionEvent.AXIS_HSCROLL);
                 if (vScroll != 0)
-                    mNative.sendMouseScroll(0, -vScroll * 10);
+                    mNative.sendMouseScroll(0, -vScroll * 10, discreteOf(-vScroll));
                 if (hScroll != 0)
-                    mNative.sendMouseScroll(1, hScroll * 10);
+                    mNative.sendMouseScroll(1, hScroll * 10, discreteOf(hScroll));
                 return true;
             }
             if (action == MotionEvent.ACTION_BUTTON_PRESS
@@ -2245,6 +2316,11 @@ public class MainActivity extends Activity
         {MotionEvent.BUTTON_BACK,      0x113}, // BTN_SIDE
         {MotionEvent.BUTTON_FORWARD,   0x114}, // BTN_EXTRA
     };
+
+    /** Notch-like wheel values get a discrete step; fractional (touchpad) deltas stay continuous. */
+    private static int discreteOf(float value) {
+        return Math.abs(value) >= 1f ? (int) Math.signum(value) : 0;
+    }
 
     private void updateMouseButtonState(int currentBS) {
         for (int[] btn : BUTTON_MAP) {
