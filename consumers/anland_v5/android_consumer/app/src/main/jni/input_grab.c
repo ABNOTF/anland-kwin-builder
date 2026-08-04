@@ -29,8 +29,10 @@
  *      (or EOF, which the kernel guarantees when the app dies) releases
  *      everything. The app only heartbeats while its main thread is running, so
  *      an ANR frees the input too.
- *   5. Devices carrying KEY_POWER that are not keyboards are watched but never
- *      grabbed: the power button always stays with Android.
+ *   5. Pure Android hardware-button nodes (Power/Volume/Wakeup) are watched but
+ *      never grabbed: those physical buttons always stay with Android. Mixed
+ *      devices such as touch panels and keyboards still get grabbed, even if
+ *      their capability bitmap also advertises KEY_POWER.
  */
 #define _GNU_SOURCE
 #include <android/log.h>
@@ -271,23 +273,6 @@ static int send_bye(int fd, int reason)
 
 /* ---------------- device discovery ---------------- */
 
-/* A real keyboard: the letter block. Used both to keep alphabetic keyboards out
- * of the "carries KEY_POWER, do not grab" rule (external keyboards commonly
- * report a power key) and to classify key-only devices. */
-static int has_alpha_keys(const unsigned long *key)
-{
-    static const int letters[] = {
-        KEY_Q, KEY_W, KEY_E, KEY_R, KEY_T, KEY_Y,
-        KEY_A, KEY_S, KEY_D, KEY_F, KEY_G,
-        KEY_Z, KEY_X, KEY_C, KEY_V,
-    };
-    for (size_t i = 0; i < sizeof(letters) / sizeof(letters[0]); i++) {
-        if (!TEST_BIT(letters[i], key))
-            return 0;
-    }
-    return 1;
-}
-
 static int any_key_bit(const unsigned long *key)
 {
     for (int i = 0; i <= KEY_MAX; i++) {
@@ -295,6 +280,37 @@ static int any_key_bit(const unsigned long *key)
             return 1;
     }
     return 0;
+}
+
+static int is_physical_android_key(int code)
+{
+    switch (code) {
+    case KEY_POWER:
+#ifdef KEY_POWER2
+    case KEY_POWER2:
+#endif
+    case KEY_WAKEUP:
+    case KEY_SLEEP:
+    case KEY_VOLUMEUP:
+    case KEY_VOLUMEDOWN:
+    case KEY_MUTE:
+        return 1;
+    default:
+        return 0;
+    }
+}
+
+static int has_only_physical_android_keys(const unsigned long *key)
+{
+    int any = 0;
+    for (int i = 0; i <= KEY_MAX; i++) {
+        if (!TEST_BIT(i, key))
+            continue;
+        any = 1;
+        if (!is_physical_android_key(i))
+            return 0;
+    }
+    return any;
 }
 
 static void read_abs_range(int fd, int axis, int *min, int *max)
@@ -356,8 +372,6 @@ static int inspect_device(const char *path, struct dev_entry *out)
     int touch   = TEST_BIT(BTN_TOUCH, key);
     int click   = TEST_BIT(BTN_LEFT, key);
     int pen     = TEST_BIT(BTN_TOOL_PEN, key) || TEST_BIT(BTN_STYLUS, key);
-    int alpha   = has_alpha_keys(key);
-    int power   = TEST_BIT(KEY_POWER, key);
     int keys    = any_key_bit(key);
 
     /* A stylus digitizer overlaps the panel; forwarding it as a second finger
@@ -365,16 +379,6 @@ static int inspect_device(const char *path, struct dev_entry *out)
     if (pen) {
         close(fd);
         return -1;
-    }
-
-    /* The power button (and the fingerprint/hall nodes that ride along with it)
-     * is the last way out of a wedged grab, so it is never taken away from
-     * Android. The node is still opened so the toggle key can be seen on
-     * chipsets that put the volume keys on the same node. */
-    if (power && !alpha) {
-        out->cls = IGRAB_CLASS_KEYBOARD;
-        out->grabbed = 0;
-        return 0;
     }
 
     /* Contacts, not axes: a gamepad also reports ABS_X/ABS_Y, and its sticks
@@ -394,6 +398,16 @@ static int inspect_device(const char *path, struct dev_entry *out)
     } else if (rel_xy) {
         out->cls = IGRAB_CLASS_MOUSE;
     } else if (keys) {
+        /* Physical Android buttons must remain available to Android while
+         * immersive mode is active. Keep these fds open watch-only so the bound
+         * toggle key can still release the session, but do not EVIOCGRAB them.
+         * Keyboards/consumer-control nodes that also advertise KEY_POWER are not
+         * protected here because their ordinary keys must not leak to Android. */
+        if (has_only_physical_android_keys(key)) {
+            out->cls = IGRAB_CLASS_KEYBOARD;
+            out->grabbed = 0;
+            return 0;
+        }
         out->cls = IGRAB_CLASS_KEYBOARD;
     } else {
         close(fd);
