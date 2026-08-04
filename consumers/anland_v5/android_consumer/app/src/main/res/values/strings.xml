@@ -15,7 +15,7 @@
     <!-- Settings home: category rows and back navigation -->
     <string name="nav_back">‹ Back</string>
     <string name="cat_keyboard_title">Keyboard &amp; Keys</string>
-    <string name="cat_keyboard_subtitle">Key binding, accessibility &amp; extra keys bar</string>
+    <string name="cat_keyboard_subtitle">Key binding, immersive mode, accessibility &amp; extra keys bar</string>
     <string name="cat_touchpad_title">Touchpad &amp; Mouse</string>
     <string name="cat_touchpad_subtitle">Touchpad mode, pointer capture &amp; sensitivity</string>
     <string name="cat_connection_subtitle">Socket, root, mic, camera &amp; audio latency</string>
@@ -37,7 +37,21 @@
     <string name="listening_countdown">Listening… (%1$ds)</string>
     <string name="status_current_none">Current: None</string>
     <string name="status_current">Current: %1$s</string>
+    <string name="status_current_no_scancode">Current: %1$s — this key reports no scan code, so immersive mode cannot use it. Bind a hardware key such as Volume Up.</string>
     <string name="keycode_unknown">Keycode %1$d</string>
+    <string name="scancode_unknown">Scan code %1$d</string>
+
+    <!-- Immersive mode -->
+    <string name="section_immersive">Immersive Mode (Experimental)</string>
+    <string name="immersive_switch">Enable Immersive Mode (Experimental)</string>
+    <string name="immersive_hint">Sends touch, keyboard and mouse input directly to the Linux desktop, keeping Android gestures out of the way. Requires root. Set a toggle key below: press it once to enter and again to exit. The mode also ends when you switch apps.</string>
+    <string name="bind_immersive_key_button">Bind Immersive Mode Key</string>
+    <string name="immersive_entering">Immersive mode: all input goes to the desktop. Press %1$s again to leave.</string>
+    <string name="immersive_exited">Immersive mode off</string>
+    <string name="immersive_no_scancode">Bind a key for immersive mode first</string>
+    <string name="immersive_failed">Could not start immersive mode: root was denied or is unavailable</string>
+    <string name="immersive_no_devices">Could not start immersive mode: no input device could be taken over</string>
+    <string name="immersive_interrupted">Immersive mode ended; input returned to Android</string>
 
     <!-- Accessibility -->
     <string name="accessibility_switch">Accessibility Key Interception</string>
