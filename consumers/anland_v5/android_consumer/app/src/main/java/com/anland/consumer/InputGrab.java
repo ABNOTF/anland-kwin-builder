@@ -377,6 +377,11 @@ final class InputGrab {
                                 + " grabbed=" + bb.getInt(rec + AUX0));
                         break;
                     case REC_DEVICE: {
+                        // A hotplug replacement is preceded by a global
+                        // SYN_DROPPED. Post that batch before replacing devs[d],
+                        // otherwise the main thread can cancel old state through
+                        // the new device object when both records share a read.
+                        batchLen = flush(batch, batchLen);
                         final int d = dev, cls = etype;
                         final int minX = bb.getInt(rec + AUX0);
                         final int maxX = bb.getInt(rec + AUX0 + 4);
@@ -390,6 +395,7 @@ final class InputGrab {
                         break;
                     }
                     case REC_READY: {
+                        batchLen = flush(batch, batchLen);
                         final int grabbed = bb.getInt(rec + AUX0);
                         main.post(() -> {
                             if (running)
@@ -408,7 +414,7 @@ final class InputGrab {
                             batchLen = flush(batch, batchLen);
                         break;
                     case REC_BYE:
-                        flush(batch, batchLen);
+                        batchLen = flush(batch, batchLen);
                         // The helper only sends this on its way out, so no kill
                         // is needed for this session.
                         finishedToken = token;

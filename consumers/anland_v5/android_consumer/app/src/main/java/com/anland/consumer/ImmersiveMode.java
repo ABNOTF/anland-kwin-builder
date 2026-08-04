@@ -377,6 +377,9 @@ final class ImmersiveMode implements InputGrab.Listener {
 
     /** End the session. Safe to call at any time, including when not running. */
     void stop() {
+        // The receiver is registered against the activity. Remove it before the
+        // helper's asynchronous teardown can outlive that activity.
+        unregisterScreenOff();
         if (!active && !starting)
             return;
         grab.stop();
@@ -388,10 +391,11 @@ final class ImmersiveMode implements InputGrab.Listener {
      * When the screen locks, Android's keyguard is about to take over the
      * display — and the keyguard cannot be swiped while the touchscreen is
      * grabbed. The session must hand the input back the moment the screen goes
-     * dark, so the power key (never grabbed, see input_grab.c) can unlock again.
+     * dark, so Android's dedicated power path (kept ungrabbed by input_grab.c)
+     * can unlock again.
      * The receiver exists only for the duration of a session: registered in
-     * {@link #start}, dropped in {@link #onEnded}, which fires exactly once per
-     * successful start.
+     * {@link #start}, dropped synchronously in {@link #stop}; {@link #onEnded}
+     * repeats that idempotent cleanup for helper-initiated exits.
      */
     private final BroadcastReceiver screenOffReceiver = new BroadcastReceiver() {
         @Override
