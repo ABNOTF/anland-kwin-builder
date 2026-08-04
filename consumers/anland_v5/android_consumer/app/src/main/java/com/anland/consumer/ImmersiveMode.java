@@ -1,7 +1,11 @@
 package com.anland.consumer;
 
+import android.content.BroadcastReceiver;
 import android.content.Context;
+import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.SharedPreferences;
+import android.os.Build;
 import android.os.Looper;
 import android.os.SystemClock;
 import android.util.Log;
@@ -40,7 +44,9 @@ import java.util.Arrays;
  * pressing it again leaves — the helper watches for that key itself, so the way
  * out never depends on this process being healthy. The Settings switch is only a
  * safety gate: with it off the key does nothing at all, and a session never
- * survives a pause, a focus change or a lost surface.
+ * survives a pause, a focus change, a lost surface or a locked screen — the
+ * keyguard needs the touchscreen, so the grab ends the moment the screen turns
+ * off (see {@link #registerScreenOff}).
  */
 final class ImmersiveMode implements InputGrab.Listener {
     private static final String TAG = "Anland";
@@ -357,6 +363,7 @@ final class ImmersiveMode implements InputGrab.Listener {
             toast(ctx.getString(R.string.immersive_failed));
             return;
         }
+        registerScreenOff();
         statsLastAt = 0L;
         statsEvents = 0;
         java.util.Arrays.fill(statsPerDev, 0);
@@ -373,6 +380,52 @@ final class ImmersiveMode implements InputGrab.Listener {
         if (!active && !starting)
             return;
         grab.stop();
+    }
+
+    // ---- screen-off safety ------------------------------------------------
+
+    /**
+     * When the screen locks, Android's keyguard is about to take over the
+     * display — and the keyguard cannot be swiped while the touchscreen is
+     * grabbed. The session must hand the input back the moment the screen goes
+     * dark, so the power key (never grabbed, see input_grab.c) can unlock again.
+     * The receiver exists only for the duration of a session: registered in
+     * {@link #start}, dropped in {@link #onEnded}, which fires exactly once per
+     * successful start.
+     */
+    private final BroadcastReceiver screenOffReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            if (Intent.ACTION_SCREEN_OFF.equals(intent.getAction())) {
+                Log.i(TAG, "screen off; leaving immersive mode");
+                stop();
+            }
+        }
+    };
+    private boolean screenOffRegistered = false;
+
+    private void registerScreenOff() {
+        if (screenOffRegistered)
+            return;
+        IntentFilter filter = new IntentFilter(Intent.ACTION_SCREEN_OFF);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU)
+            ctx.registerReceiver(screenOffReceiver, filter,
+                    Context.RECEIVER_NOT_EXPORTED);
+        else
+            ctx.registerReceiver(screenOffReceiver, filter);
+        screenOffRegistered = true;
+    }
+
+    private void unregisterScreenOff() {
+        if (!screenOffRegistered)
+            return;
+        screenOffRegistered = false;
+        try {
+            ctx.unregisterReceiver(screenOffReceiver);
+        } catch (IllegalArgumentException ignored) {
+            // The activity auto-unregisters its receivers on destroy; a session
+            // end delivered after that has nothing left to unregister.
+        }
     }
 
     // ---- InputGrab.Listener (all on the main thread) ---------------------
@@ -423,6 +476,7 @@ final class ImmersiveMode implements InputGrab.Listener {
         boolean wasRunning = active || starting;
         if (wasRunning && reason == InputGrab.REASON_TOGGLE)
             suppressToggleTail();
+        unregisterScreenOff();
         active = false;
         starting = false;
         stats.removeCallbacks(statsTick);
