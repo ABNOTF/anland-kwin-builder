@@ -42,9 +42,9 @@
     <string name="scancode_unknown">扫描码 %1$d</string>
 
     <!-- Immersive mode -->
-    <string name="section_immersive">沉浸模式</string>
-    <string name="immersive_switch">启用沉浸模式</string>
-    <string name="immersive_hint">通过 root 独占接管（EVIOCGRAB）触摸屏、键盘与指针设备，让安卓完全收不到这些输入，全部直接送往 Linux 桌面，系统手势、通知栏与导航栏都不会再干扰。需要 root。默认关闭且不会自行开启：先打开此开关并在下方绑定按键，然后按该键进入，再按一次退出。会话期间本应用自身的屏上控件按设计无法点击；「捕获外接指针」会被暂时挂起（该开关本身不受影响）；触摸板模式依然生效——手指移动光标，灵敏度沿用「触摸板与鼠标」中的设置。应用失去焦点时会话也会结束。</string>
+    <string name="section_immersive">沉浸模式(实验性)</string>
+    <string name="immersive_switch">启用沉浸模式(实验性)</string>
+    <string name="immersive_hint">将触摸、键盘和鼠标等输入直接交给 Linux 桌面，避免 Android 系统手势干扰。需要 root。在下方设置切换按键：按一次进入，再按一次退出；切换到其他应用时会自动退出。</string>
     <string name="bind_immersive_key_button">绑定沉浸模式按键</string>
     <string name="immersive_entering">已进入沉浸模式：所有输入交给桌面，再按一次 %1$s 退出</string>
     <string name="immersive_exited">已退出沉浸模式</string>
