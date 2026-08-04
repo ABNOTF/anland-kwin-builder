@@ -192,6 +192,9 @@ final class ImmersiveMode implements InputGrab.Listener {
     private boolean starting = false;
     /** The user asked to leave, so the closing toast is theirs to see. */
     private boolean userExitPending = false;
+    private boolean suppressToggleUntilUp = false;
+    private long suppressToggleDeadlineMs = 0L;
+    private static final long TOGGLE_SUPPRESS_MS = 2000L;
 
     // Session telemetry: events per second, per-device event counts and the
     // panel's current rate, logged once a second while a session runs. It is the
@@ -274,6 +277,26 @@ final class ImmersiveMode implements InputGrab.Listener {
         return keycode == -1 ? -1 : KeyCodeMapper.getScanCode(keycode);
     }
 
+    private void suppressToggleTail() {
+        suppressToggleUntilUp = true;
+        suppressToggleDeadlineMs = SystemClock.uptimeMillis() + TOGGLE_SUPPRESS_MS;
+    }
+
+    private boolean consumeSuppressedToggle(KeyEvent event) {
+        if (!suppressToggleUntilUp)
+            return false;
+        if (SystemClock.uptimeMillis() > suppressToggleDeadlineMs) {
+            suppressToggleUntilUp = false;
+            suppressToggleDeadlineMs = 0L;
+            return false;
+        }
+        if (event.getAction() == KeyEvent.ACTION_UP) {
+            suppressToggleUntilUp = false;
+            suppressToggleDeadlineMs = 0L;
+        }
+        return true;
+    }
+
     /**
      * Consume the bound key. Called from both key paths — the accessibility
      * service eats keys before the window when interception is on, so neither
@@ -299,6 +322,8 @@ final class ImmersiveMode implements InputGrab.Listener {
         // Settings flags such a binding where the user can see it.
         if (boundScanCode() <= 0)
             return false;
+        if (consumeSuppressedToggle(event))
+            return true;
 
         if (event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0)
             toggle();
@@ -310,6 +335,7 @@ final class ImmersiveMode implements InputGrab.Listener {
     private void toggle() {
         if (active || starting) {
             userExitPending = true;
+            suppressToggleTail();
             stop();
         } else {
             start();
@@ -395,6 +421,8 @@ final class ImmersiveMode implements InputGrab.Listener {
     @Override
     public void onEnded(int reason) {
         boolean wasRunning = active || starting;
+        if (wasRunning && reason == InputGrab.REASON_TOGGLE)
+            suppressToggleTail();
         active = false;
         starting = false;
         stats.removeCallbacks(statsTick);
