@@ -29,10 +29,10 @@
  *      (or EOF, which the kernel guarantees when the app dies) releases
  *      everything. The app only heartbeats while its main thread is running, so
  *      an ANR frees the input too.
- *   5. Pure Android hardware-button nodes (Power/Volume/Wakeup) are watched but
- *      never grabbed: those physical buttons always stay with Android. Mixed
- *      devices such as touch panels and keyboards still get grabbed, even if
- *      their capability bitmap also advertises KEY_POWER.
+ *   5. Pure Android hardware-button nodes, and every non-keyboard node that
+ *      reports Power, are watched but never grabbed. That preserves Android's
+ *      lock/wake path even on panels that expose KEY_POWER alongside contacts.
+ *      Full keyboards remain grabbable because their ordinary keys cannot leak.
  */
 #define _GNU_SOURCE
 #include <android/log.h>
@@ -83,6 +83,7 @@ struct dev_entry {
     int  fd;
     int  cls;        /* IGRAB_CLASS_* */
     int  grabbed;    /* 0 => watched only (toggle detection), events not forwarded */
+    int  announced;  /* the app has received this entry's DEVICE record */
     int  multitouch;
     int  clickpad;   /* one button under the pad: BTN_LEFT alone means "a click" */
     int  min_x, max_x, min_y, max_y;
@@ -251,6 +252,28 @@ static int send_resync(int fd)
     return 0;
 }
 
+/*
+ * Finish a partial record and, after any loss, deliver the global SYN_DROPPED
+ * marker before normal traffic resumes. This is also driven by POLLOUT while
+ * idle: waiting for another input event leaves a final KEY_UP or SYN_REPORT
+ * stranded forever when the user stops moving.
+ *
+ *  1: normal records may be sent; 0: socket still back-pressured; -1: dead.
+ */
+static int recover_output(int fd)
+{
+    int flushed = flush_pending(fd);
+    if (flushed < 0)
+        return -1;
+    if (flushed == 0)
+        return 0;
+    if (!g_need_resync)
+        return 1;
+    if (send_resync(fd) < 0)
+        return -1;
+    return (!g_need_resync && g_pending_len == 0) ? 1 : 0;
+}
+
 static int send_bye(int fd, int reason)
 {
     /* Finish any half-written record first: leaving one truncated would put the
@@ -279,6 +302,36 @@ static int any_key_bit(const unsigned long *key)
         if (TEST_BIT(i, key))
             return 1;
     }
+    return 0;
+}
+
+/* A full keyboard is allowed to advertise KEY_POWER: many docks expose that
+ * capability on their ordinary keyboard node while the tablet's real power
+ * switch is a separate node. Non-keyboard nodes have no safe way to split one
+ * evdev fd after EVIOCGRAB, so a Power-bearing panel/mouse/controller stays
+ * watch-only and Android retains its lock/wake path. */
+static int has_alpha_keys(const unsigned long *key)
+{
+    static const int letters[] = {
+        KEY_Q, KEY_W, KEY_E, KEY_R, KEY_T, KEY_Y,
+        KEY_A, KEY_S, KEY_D, KEY_F, KEY_G,
+        KEY_Z, KEY_X, KEY_C, KEY_V,
+    };
+    for (size_t i = 0; i < sizeof(letters) / sizeof(letters[0]); i++) {
+        if (!TEST_BIT(letters[i], key))
+            return 0;
+    }
+    return 1;
+}
+
+static int has_power_key(const unsigned long *key)
+{
+    if (TEST_BIT(KEY_POWER, key))
+        return 1;
+#ifdef KEY_POWER2
+    if (TEST_BIT(KEY_POWER2, key))
+        return 1;
+#endif
     return 0;
 }
 
@@ -372,6 +425,8 @@ static int inspect_device(const char *path, struct dev_entry *out)
     int touch   = TEST_BIT(BTN_TOUCH, key);
     int click   = TEST_BIT(BTN_LEFT, key);
     int pen     = TEST_BIT(BTN_TOOL_PEN, key) || TEST_BIT(BTN_STYLUS, key);
+    int alpha   = has_alpha_keys(key);
+    int power   = has_power_key(key);
     int keys    = any_key_bit(key);
 
     /* A stylus digitizer overlaps the panel; forwarding it as a second finger
@@ -379,6 +434,17 @@ static int inspect_device(const char *path, struct dev_entry *out)
     if (pen) {
         close(fd);
         return -1;
+    }
+
+    /* A single EVIOCGRAB applies to the whole node. Do not take a touchscreen,
+     * touchpad, mouse or consumer-control node that carries Power: forwarding
+     * its KEY_POWER to the desktop cannot make Android lock the device, so the
+     * ACTION_SCREEN_OFF safety receiver would never run. Full keyboards retain
+     * the existing exception above because their ordinary keys must not leak. */
+    if (power && !alpha) {
+        out->cls = IGRAB_CLASS_KEYBOARD;
+        out->grabbed = 0;
+        return 0;
     }
 
     /* Contacts, not axes: a gamepad also reports ABS_X/ABS_Y, and its sticks
@@ -401,8 +467,8 @@ static int inspect_device(const char *path, struct dev_entry *out)
         /* Physical Android buttons must remain available to Android while
          * immersive mode is active. Keep these fds open watch-only so the bound
          * toggle key can still release the session, but do not EVIOCGRAB them.
-         * Keyboards/consumer-control nodes that also advertise KEY_POWER are not
-         * protected here because their ordinary keys must not leak to Android. */
+         * Non-keyboard Power nodes returned above; this path protects the rest
+         * of the dedicated Android button devices. */
         if (has_only_physical_android_keys(key)) {
             out->cls = IGRAB_CLASS_KEYBOARD;
             out->grabbed = 0;
@@ -502,6 +568,70 @@ static int already_tracked(int rdev)
     return 0;
 }
 
+static void fill_device_record(struct igrab_rec *rec, int idx)
+{
+    const struct dev_entry *de = &g_devs[idx];
+    memset(rec, 0, sizeof(*rec));
+    rec->rtype = IGRAB_REC_DEVICE;
+    rec->dev   = (uint16_t)idx;
+    rec->etype = (uint16_t)de->cls;
+    rec->aux[IGRAB_AUX_MIN_X] = de->min_x;
+    rec->aux[IGRAB_AUX_MAX_X] = de->max_x;
+    rec->aux[IGRAB_AUX_MIN_Y] = de->min_y;
+    rec->aux[IGRAB_AUX_MAX_Y] = de->max_y;
+    rec->aux[IGRAB_AUX_FLAGS] =
+        (de->grabbed ? IGRAB_DEV_GRABBED : 0) |
+        (de->multitouch ? IGRAB_DEV_MULTITOUCH : 0) |
+        (de->clickpad ? IGRAB_DEV_CLICKPAD : 0);
+}
+
+/* Reuse a detached device id before growing the table. The Java side only sees
+ * a replacement DEVICE record after the global resync sent on removal, so the
+ * old state cannot be confused with the new node. */
+static int find_free_device_slot(void)
+{
+    for (int i = 0; i < g_ndevs; i++) {
+        if (g_devs[i].fd < 0)
+            return i;
+    }
+    return g_ndevs < IGRAB_MAX_DEVICES ? g_ndevs : -1;
+}
+
+/* A hotplugged device is grabbed before it can leak input to Android, but its
+ * events stay local until its DEVICE record is definitely on the stream. The
+ * non-blocking transport may drop a record under pressure, so retry on every
+ * writable turn instead of treating that one announcement as expendable. */
+static int announce_pending_devices(int sock)
+{
+    for (int i = 0; i < g_ndevs; i++) {
+        if (g_devs[i].fd < 0 || g_devs[i].announced)
+            continue;
+
+        int ready = recover_output(sock);
+        if (ready <= 0)
+            return ready;
+
+        struct igrab_rec rec;
+        fill_device_record(&rec, i);
+        if (send_rec(sock, &rec) < 0)
+            return -1;
+        if (g_pending_len != 0 || g_need_resync)
+            return 0;
+        g_devs[i].announced = 1;
+        LOGI("announced device %d '%s'", i, g_devs[i].name);
+    }
+    return 1;
+}
+
+static int has_unannounced_devices(void)
+{
+    for (int i = 0; i < g_ndevs; i++) {
+        if (g_devs[i].fd >= 0 && !g_devs[i].announced)
+            return 1;
+    }
+    return 0;
+}
+
 /*
  * Grab any input device that appeared since the last scan. A Bluetooth mouse
  * that went to sleep reconnects as a brand-new node mid-session; without this
@@ -510,14 +640,14 @@ static int already_tracked(int rdev)
  * start, a DEVICE record announces them to the app, and the toggle key is
  * watched on them like on everything else.
  */
-static void scan_new_devices(int sock)
+static void scan_new_devices(void)
 {
     DIR *dir = opendir("/dev/input");
     if (!dir)
         return;
 
     struct dirent *ent;
-    while ((ent = readdir(dir)) != NULL && g_ndevs < IGRAB_MAX_DEVICES) {
+    while ((ent = readdir(dir)) != NULL) {
         if (strncmp(ent->d_name, "event", 5) != 0)
             continue;
         char path[300];
@@ -526,29 +656,18 @@ static void scan_new_devices(int sock)
         if (rdev < 0 || already_tracked(rdev))
             continue;
 
+        int idx = find_free_device_slot();
+        if (idx < 0)
+            break;
+
         struct dev_entry de;
         if (inspect_device(path, &de) < 0)
             continue;   /* uninteresting, ungrabbable, or already grabbed by us */
-        int idx = g_ndevs;
         g_devs[idx] = de;
-        g_ndevs++;
+        if (idx == g_ndevs)
+            g_ndevs++;
         LOGI("new device %s '%s' class=%d %s", path, de.name, de.cls,
-             de.grabbed ? "GRABBED" : "watch-only");
-
-        struct igrab_rec rec;
-        memset(&rec, 0, sizeof(rec));
-        rec.rtype = IGRAB_REC_DEVICE;
-        rec.dev   = (uint16_t)idx;
-        rec.etype = (uint16_t)de.cls;
-        rec.aux[IGRAB_AUX_MIN_X] = de.min_x;
-        rec.aux[IGRAB_AUX_MAX_X] = de.max_x;
-        rec.aux[IGRAB_AUX_MIN_Y] = de.min_y;
-        rec.aux[IGRAB_AUX_MAX_Y] = de.max_y;
-        rec.aux[IGRAB_AUX_FLAGS] =
-            (de.grabbed ? IGRAB_DEV_GRABBED : 0) |
-            (de.multitouch ? IGRAB_DEV_MULTITOUCH : 0) |
-            (de.clickpad ? IGRAB_DEV_CLICKPAD : 0);
-        send_rec(sock, &rec);   /* non-blocking; a drop is harmless */
+             de.grabbed ? "GRABBED (awaiting DEVICE)" : "watch-only (awaiting DEVICE)");
     }
     closedir(dir);
 }
@@ -566,20 +685,10 @@ static int send_device_list(int sock, int grabbed)
         return -1;
 
     for (int i = 0; i < g_ndevs; i++) {
-        memset(&rec, 0, sizeof(rec));
-        rec.rtype = IGRAB_REC_DEVICE;
-        rec.dev   = (uint16_t)i;
-        rec.etype = (uint16_t)g_devs[i].cls;
-        rec.aux[IGRAB_AUX_MIN_X] = g_devs[i].min_x;
-        rec.aux[IGRAB_AUX_MAX_X] = g_devs[i].max_x;
-        rec.aux[IGRAB_AUX_MIN_Y] = g_devs[i].min_y;
-        rec.aux[IGRAB_AUX_MAX_Y] = g_devs[i].max_y;
-        rec.aux[IGRAB_AUX_FLAGS] =
-            (g_devs[i].grabbed ? IGRAB_DEV_GRABBED : 0) |
-            (g_devs[i].multitouch ? IGRAB_DEV_MULTITOUCH : 0) |
-            (g_devs[i].clickpad ? IGRAB_DEV_CLICKPAD : 0);
+        fill_device_record(&rec, i);
         if (send_all(sock, &rec, sizeof(rec)) < 0)
             return -1;
+        g_devs[i].announced = 1;
     }
 
     memset(&rec, 0, sizeof(rec));
@@ -625,8 +734,28 @@ static int pump_device(int sock, int idx, int toggle)
             if (!g_devs[idx].grabbed)
                 continue;   /* Android still owns it; forwarding would duplicate */
 
-            if (g_need_resync && send_resync(sock) < 0)
+            /* A hotplugged node stays silent until the Java side has its DEVICE
+             * descriptor. Discarding a transition here requires a global reset:
+             * otherwise its first delivered record could be a KEY_UP for a key
+             * the desktop never saw go down. */
+            if (!g_devs[idx].announced) {
+                g_need_resync = 1;
+                continue;
+            }
+
+            int ready = recover_output(sock);
+            if (ready < 0)
                 return -1;
+            if (ready == 0) {
+                g_drops++;
+                g_need_resync = 1;
+                if (g_drops > MAX_DROPS) {
+                    LOGE("app is not reading (%d dropped records); giving input back",
+                         g_drops);
+                    return -3;
+                }
+                continue;
+            }
 
             struct igrab_rec rec;
             memset(&rec, 0, sizeof(rec));
@@ -715,6 +844,8 @@ int main(int argc, char **argv)
         int nfds = 0;
         pfds[nfds].fd = sock;
         pfds[nfds].events = POLLIN;
+        if (g_pending_len != 0 || g_need_resync || has_unannounced_devices())
+            pfds[nfds].events |= POLLOUT;
         pfds[nfds].revents = 0;
         nfds++;
         for (int i = 0; i < g_ndevs; i++) {
@@ -757,11 +888,29 @@ int main(int argc, char **argv)
             break;
         }
 
-        /* Bluetooth devices wake and reconnect as new nodes; pick them up and
-         * pull them into the session. */
+        /* Finish any partial stream work even when the user has stopped moving.
+         * POLLOUT wakes this promptly; the unconditional call also handles a
+         * race where the socket became writable between poll() and here. */
+        int output_ready = recover_output(sock);
+        if (output_ready < 0) {
+            reason = IGRAB_BYE_PEER_GONE;
+            break;
+        }
+
+        /* Bluetooth devices wake and reconnect as new nodes. A device is held
+         * locally until announce_pending_devices() has put its DEVICE record on
+         * the stream, so Android and the desktop can never both own it. */
         if (now_ms() - last_scan > RESCAN_INTERVAL_MS) {
-            scan_new_devices(sock);
+            scan_new_devices();
             last_scan = now_ms();
+        }
+
+        if (output_ready > 0) {
+            int announced = announce_pending_devices(sock);
+            if (announced < 0) {
+                reason = IGRAB_BYE_PEER_GONE;
+                break;
+            }
         }
 
         int stop = 0;
@@ -790,11 +939,16 @@ int main(int argc, char **argv)
                 stop = 1;
             } else if (r == -2) {
                 /* Device vanished (unplugged dock/keyboard). Drop it and carry
-                 * on -- the remaining devices are still grabbed. */
+                 * on -- the remaining devices are still grabbed. Release every
+                 * remote state first; otherwise a key/button held at unplug stays
+                 * pressed until the whole immersive session ends. */
                 LOGI("device '%s' went away", g_devs[idx].name);
+                if (g_devs[idx].grabbed && g_devs[idx].announced)
+                    g_need_resync = 1;
                 if (g_devs[idx].grabbed)
                     ioctl(g_devs[idx].fd, EVIOCGRAB, 0);
                 close(g_devs[idx].fd);
+                memset(&g_devs[idx], 0, sizeof(g_devs[idx]));
                 g_devs[idx].fd = -1;
             }
         }
