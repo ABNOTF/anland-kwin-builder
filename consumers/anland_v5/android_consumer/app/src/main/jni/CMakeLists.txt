@@ -48,3 +48,24 @@ set_target_properties(fdhelper PROPERTIES
 )
 
 target_link_libraries(fdhelper log)
+
+# Root helper for "immersive mode": grabs the input devices (EVIOCGRAB) and
+# streams their events to the app over a bridge socket. Same lib*.so packaging
+# trick as fdhelper above -- the app launches it via `su -c` because
+# untrusted_app cannot read /dev/input itself.
+add_executable(inputgrab
+    input_grab.c
+    ${LIBDISPLAY_DIR}/common/socket_utils.c
+)
+
+target_include_directories(inputgrab PRIVATE
+    ${LIBDISPLAY_DIR}/common
+)
+
+set_target_properties(inputgrab PROPERTIES
+    PREFIX "lib"
+    OUTPUT_NAME "inputgrab"
+    SUFFIX ".so"
+)
+
+target_link_libraries(inputgrab log)

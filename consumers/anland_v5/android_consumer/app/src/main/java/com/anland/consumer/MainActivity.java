@@ -7,6 +7,7 @@ import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
+import android.content.Context;
 import android.content.Intent;
 import android.content.pm.ActivityInfo;
 import android.content.pm.PackageManager;
@@ -41,7 +42,7 @@ import java.nio.charset.StandardCharsets;
 
 
 public class MainActivity extends Activity
-        implements SurfaceHolder.Callback, SystemIME.Host {
+        implements SurfaceHolder.Callback, SystemIME.Host, ImmersiveMode.Host {
     private static final String TAG = "Anland";
 
     private SurfaceView surfaceView;
@@ -238,6 +239,17 @@ public class MainActivity extends Activity
     // across the midline before lift-off cannot strand a held button.
     private int lastTouchpadBtnPressed = 0;
 
+    // Immersive mode: a root helper grabs the physical input devices so nothing
+    // reaches Android at all, and their events are replayed onto the desktop
+    // through the same paths as the on-screen ones. Off unless the user both
+    // enables it in Settings and presses the key they bound to it.
+    private ImmersiveMode immersive;
+    private boolean immersiveActive = false;
+    // Cached display rotation. A grabbed touchscreen reports in the panel's own
+    // fixed frame, so the rotation has to be undone before its coordinates mean
+    // anything on screen; reading it per contact would be wasteful.
+    private int displayRotation = Surface.ROTATION_0;
+
     static {
         // Loads the single shared .so backing MainActivity, Native and
         // CameraServices; the last two only declare their natives.
@@ -251,10 +263,19 @@ public class MainActivity extends Activity
             @Override public void onDisplayRemoved(int displayId) {}
             @Override public void onDisplayChanged(int displayId) {
                 Display d = getDisplay();
-                if (d != null && d.getDisplayId() == displayId)
+                if (d != null && d.getDisplayId() == displayId) {
                     pushRefreshRate();
+                    updateDisplayRotation();
+                }
             }
         };
+
+    /** Keep the cached rotation current; see {@link #displayRotation}. */
+    private void updateDisplayRotation() {
+        Display d = getDisplay();
+        if (d != null)
+            displayRotation = d.getRotation();
+    }
 
     // Called from native on_fallback (display lib dropped the connection). Runs on a
     // native worker thread, so hop to the UI thread before touching the toast/finish.
@@ -307,6 +328,11 @@ public class MainActivity extends Activity
                 releasePointerCapture(false);
             }
         }
+        // Losing focus means something else is on screen (a system dialog, a
+        // call). Holding an exclusive grab on every input device through that
+        // would leave the user with nothing to answer it with.
+        if (!hasFocus && immersive != null)
+            immersive.stop();
     }
 
     @Override
@@ -686,6 +712,10 @@ public class MainActivity extends Activity
         capturedTouchpad = new Touchpad(this, new TouchpadOutput(false), false);
         applyTouchpadPrefs(prefs);
         pointerCaptureEnabled = prefs.getBoolean(KEY_POINTER_CAPTURE, false);
+        updateDisplayRotation();
+        // Never starts a session by itself: the user has to enable it in Settings
+        // and press the key they bound to it.
+        immersive = new ImmersiveMode(this);
 
         // Requesting capture before the window is attached is a no-op. The post
         // below covers the initial attach; onWindowFocusChanged() retries after a
@@ -1044,26 +1074,26 @@ public class MainActivity extends Activity
     private void applyTouchpadPrefs(SharedPreferences prefs) {
         capturedTouchpadAccel = Math.max(0.5f,
                 Math.min(10.0f, prefs.getFloat(KEY_MOUSE_ACCEL, 1.0f)));
-        float scrollSpeed = prefs.getFloat(KEY_SCROLL_SPEED,
-                Touchpad.DEFAULT_SCROLL_SPEED);
-        boolean scrollReversed = prefs.getBoolean(KEY_SCROLL_REVERSE, false);
-        float scrollFactor = prefs.getFloat(KEY_SCROLL_THRESHOLD,
-                Touchpad.DEFAULT_SCROLL_THRESHOLD_FACTOR);
-        float moveFactor = prefs.getFloat(KEY_MOVE_THRESHOLD,
-                Touchpad.DEFAULT_MOVE_THRESHOLD_FACTOR);
-        float gestureScale = prefs.getFloat(KEY_GESTURE_SCALE,
-                Touchpad.DEFAULT_GESTURE_SCALE);
+        applyTouchpadPrefs(prefs, screenTouchpad);
+        applyTouchpadPrefs(prefs, capturedTouchpad);
+    }
 
-        Touchpad[] touchpads = {screenTouchpad, capturedTouchpad};
-        for (Touchpad pad : touchpads) {
-            if (pad == null)
-                continue;
-            pad.setAccelStrength(capturedTouchpadAccel);
-            pad.setScrollSpeed(scrollSpeed);
-            pad.setScrollReversed(scrollReversed);
-            pad.setGestureThresholds(scrollFactor, moveFactor);
-            pad.setGestureScale(gestureScale);
-        }
+    /** The same tuning for one pad, so an immersive session's pad shares it. */
+    private void applyTouchpadPrefs(SharedPreferences prefs, Touchpad pad) {
+        if (pad == null)
+            return;
+        pad.setAccelStrength(Math.max(0.5f,
+                Math.min(10.0f, prefs.getFloat(KEY_MOUSE_ACCEL, 1.0f))));
+        pad.setScrollSpeed(prefs.getFloat(KEY_SCROLL_SPEED,
+                Touchpad.DEFAULT_SCROLL_SPEED));
+        pad.setScrollReversed(prefs.getBoolean(KEY_SCROLL_REVERSE, false));
+        pad.setGestureThresholds(
+                prefs.getFloat(KEY_SCROLL_THRESHOLD,
+                        Touchpad.DEFAULT_SCROLL_THRESHOLD_FACTOR),
+                prefs.getFloat(KEY_MOVE_THRESHOLD,
+                        Touchpad.DEFAULT_MOVE_THRESHOLD_FACTOR));
+        pad.setGestureScale(prefs.getFloat(KEY_GESTURE_SCALE,
+                Touchpad.DEFAULT_GESTURE_SCALE));
     }
 
     /**
@@ -1096,9 +1126,11 @@ public class MainActivity extends Activity
     }
 
     /** Whether pointer capture should be active. Setting ON -> always on (the var is
-     *  ignored); setting OFF -> follows the producer's CONSUMER_VAR_CAPTURE_MOUSE. */
+     *  ignored); setting OFF -> follows the producer's CONSUMER_VAR_CAPTURE_MOUSE.
+     *  An immersive session overrides both: the pointer is already grabbed at the
+     *  evdev level, so Android's capture would only fight with it. */
     private boolean pointerCaptureWanted() {
-        return pointerCaptureEnabled || captureMouseForced;
+        return !immersiveActive && (pointerCaptureEnabled || captureMouseForced);
     }
 
     /** Called from the native event thread when the producer sets a consumer var.
@@ -1300,11 +1332,14 @@ public class MainActivity extends Activity
         if (action == MotionEvent.ACTION_MOVE || action == MotionEvent.ACTION_HOVER_MOVE) {
             // Relative mouse samples can be batched.  Consume every historical
             // sample so fast movements do not lose deltas between frames.
+            // Same acceleration curve as the touchpads: a Bluetooth mouse is
+            // SOURCE_MOUSE_RELATIVE, and without this it would bypass the
+            // sensitivity setting entirely.
             for (int i = 0; i < event.getHistorySize(); i++) {
-                movePointerBy(event.getHistoricalX(0, i),
+                sendCapturedTouchpadMotion(event.getHistoricalX(0, i),
                         event.getHistoricalY(0, i));
             }
-            movePointerBy(event.getX(), event.getY());
+            sendCapturedTouchpadMotion(event.getX(), event.getY());
         }
 
         if (action == MotionEvent.ACTION_SCROLL) {
@@ -1774,6 +1809,7 @@ public class MainActivity extends Activity
         DisplayManager dm = getSystemService(DisplayManager.class);
         if (dm != null)
             dm.registerDisplayListener(displayListener, null);
+        updateDisplayRotation();
         // Bring the camera service up (or confirm it disabled) BEFORE nativeStart, so
         // the render thread's do_connect() sees a settled camera_service_is_ready()
         // and registers SERVICE_TYPE_CAMERA on the very first connect rather than a
@@ -1836,6 +1872,9 @@ public class MainActivity extends Activity
         if (mForceSettings) return;
         // Release any held FCL controller keys before leaving the window.
         hideFclController();
+        // A session must never outlive the foreground: leaving the input devices
+        // grabbed for a window the user has left is how a tablet gets bricked.
+        if (immersive != null) immersive.stop();
         clearPointerCaptureBackTracking();
         releasePointerCapture(false);
         NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
@@ -1851,6 +1890,7 @@ public class MainActivity extends Activity
     protected void onDestroy() {
         hideFclController();
         abandonMediaAudioFocus();
+        if (immersive != null) immersive.stop();
         releasePointerCapture(false);
         if (mRegisteredSocket != null) {
             sWindowsBySocket.remove(mRegisteredSocket, this);
@@ -1961,6 +2001,7 @@ public class MainActivity extends Activity
         Log.i(TAG, "surfaceChanged: " + width + "x" + height);
         viewWidth = width;
         viewHeight = height;
+        updateDisplayRotation();
         ensurePointerPosition();
         surfaceReady = true;
         // Same ordering guarantee as onResume: camera service settled before connect.
@@ -1982,6 +2023,7 @@ public class MainActivity extends Activity
     @Override
     public void surfaceDestroyed(SurfaceHolder holder) {
         surfaceReady = false;
+        if (immersive != null) immersive.stop();
         releasePointerCapture(false);
         mNative.stop();
     }
@@ -2229,6 +2271,163 @@ public class MainActivity extends Activity
         }
     }
 
+    // ---- ImmersiveMode.Host ----
+    //
+    // Immersive mode replays grabbed devices through the paths the on-screen
+    // input already uses, so touchpad mode, the pointer sensitivity and the
+    // gesture tuning apply to it without any of it being reimplemented.
+
+    @Override
+    public Context context() {
+        return this;
+    }
+
+    @Override
+    public int outputWidth() {
+        return pointerViewWidth();
+    }
+
+    @Override
+    public int outputHeight() {
+        return pointerViewHeight();
+    }
+
+    /** The panel's current rate, for the session's telemetry line. */
+    @Override
+    public float displayRefreshHz() {
+        Display d = getDisplay();
+        return d != null ? d.getRefreshRate() : 0f;
+    }
+
+    // Letterboxed output starts at the surface's centering offset, the same
+    // origin the virtual cursor is clamped to.
+    @Override
+    public float outputOriginX() {
+        return pointerOriginX();
+    }
+
+    @Override
+    public float outputOriginY() {
+        return pointerOriginY();
+    }
+
+    @Override
+    public int displayRotation() {
+        return displayRotation;
+    }
+
+    /**
+     * A frame from the grabbed touchscreen, already in view pixels. This is the
+     * non-mouse branch of {@link #onTouchEvent} verbatim, which is the point:
+     * with touchpad mode on the finger drives the cursor relatively, with it off
+     * the touch maps straight onto the desktop.
+     */
+    @Override
+    public void onGrabbedTouch(MotionEvent ev) {
+        if (mNative == null)
+            return;
+        if (isTouchpadMode) {
+            updateTouchpadBounds(null);
+            screenTouchpad.onTouch(ev);
+        } else {
+            handleTouchEvent(ev);
+        }
+    }
+
+    /**
+     * A {@link Touchpad} for a grabbed physical pad. Its recognized motion is the
+     * cursor here (emitMotion), unlike Android's captured pad, whose movement
+     * comes from the driver's own relative axes; and its taps are the only click
+     * source, since the tap-to-click Android would have done is bypassed.
+     */
+    @Override
+    public Touchpad newGrabbedPad() {
+        Touchpad pad = new Touchpad(this, new TouchpadOutput(true), true);
+        applyTouchpadPrefs(getSharedPreferences(PREFS_NAME, MODE_PRIVATE), pad);
+        pad.setOutputSize(pointerViewWidth(), pointerViewHeight());
+        return pad;
+    }
+
+    @Override
+    public void movePointerRelative(float dx, float dy) {
+        // Same acceleration curve as a captured pad, so the sensitivity slider
+        // under Touchpad & Mouse means the same thing in an immersive session.
+        sendCapturedTouchpadMotion(dx, dy);
+    }
+
+    @Override
+    public void sendKey(int action, int evdev) {
+        if (mNative != null)
+            mNative.sendKey(action, evdev);
+    }
+
+    @Override
+    public void sendMouseButton(int button, boolean pressed) {
+        if (mNative != null)
+            mNative.sendMouseButton(button, pressed);
+    }
+
+    @Override
+    public void sendMouseScroll(int axis, float value) {
+        if (mNative != null)
+            mNative.sendMouseScroll(axis, value);
+    }
+
+    @Override
+    public void onImmersiveChanged(boolean active) {
+        immersiveActive = active;
+        if (active) {
+            // The pointer is grabbed at the evdev level for the whole session, so
+            // Android's capture is dropped for its duration. The user's "capture
+            // external pointer" setting is left alone and takes effect again as
+            // soon as the session ends.
+            releasePointerCapture(false);
+            pinDisplayRefreshRate(true);
+        } else {
+            pinDisplayRefreshRate(false);
+            if (mRoot != null)
+                mRoot.post(this::syncPointerCapture);
+        }
+    }
+
+    /**
+     * While an immersive session runs, the desktop is the only thing on screen.
+     * Panels with power-saving mode switching drop to 30-60 Hz when the image
+     * goes still, which reads as a sudden refresh-rate drop and stutter the
+     * moment the user stops moving the pointer; a touch on the panel would have
+     * kept it boosted before. Pin the display to a high rate for the duration
+     * (KWin follows the resulting mode switch through pushRefreshRate).
+     */
+    private void pinDisplayRefreshRate(boolean pin) {
+        try {
+            Surface s = surfaceView.getHolder().getSurface();
+            if (s == null || !s.isValid())
+                return;
+            if (!pin) {
+                s.setFrameRate(0f, Surface.FRAME_RATE_COMPATIBILITY_DEFAULT,
+                        Surface.CHANGE_FRAME_RATE_ALWAYS);
+                return;
+            }
+            Display d = getDisplay();
+            if (d == null)
+                return;
+            float hz = d.getRefreshRate();
+            if (hz < 90f) {
+                // Entered mid-drop: go for the panel's best instead of pinning
+                // whatever low rate it has fallen to.
+                for (float r : d.getSupportedRefreshRates()) {
+                    if (r > hz)
+                        hz = r;
+                }
+            }
+            s.setFrameRate(hz, Surface.FRAME_RATE_COMPATIBILITY_DEFAULT,
+                    Surface.CHANGE_FRAME_RATE_ALWAYS);
+            Log.i(TAG, "immersive: display pinned at " + hz + " Hz");
+        } catch (Exception e) {
+            Log.w(TAG, "setFrameRate failed: " + e);
+        }
+    }
+
     // ================================================================
     // Route touchscreen gestures and ordinary (non-captured) mouse events.
     // ================================================================
@@ -2314,6 +2513,10 @@ public class MainActivity extends Activity
 
     @Override
     public boolean onKeyDown(int keyCode, KeyEvent event) {
+        // First: the immersive toggle is the way out of a session that has taken
+        // every input device, so nothing else may consume it.
+        if (immersive != null && immersive.handleKey(event))
+            return true;
         if (handlePointerCaptureBackKey(event))
             return true;
         // Mouse Back is already forwarded as BTN_SIDE from the MotionEvent path.
@@ -2397,6 +2600,11 @@ public class MainActivity extends Activity
     // Called from KeyInterceptor (accessibility service) to handle keys that
     // the normal onKeyDown/onKeyUp might miss (e.g. Fn combos).
     public boolean handleAccessibilityKey(KeyEvent event) {
+        // With interception on, KeyInterceptor consumes keys before the window
+        // ever sees them, so the immersive toggle has to be recognised here too —
+        // the two features are wanted by exactly the same users.
+        if (immersive != null && immersive.handleKey(event))
+            return true;
         if (handlePointerCaptureBackKey(event))
             return true;
         if (event.getKeyCode() == KeyEvent.KEYCODE_BACK && isMouseKeyEvent(event))
@@ -2458,6 +2666,8 @@ public class MainActivity extends Activity
 
     @Override
     public boolean onKeyUp(int keyCode, KeyEvent event) {
+        if (immersive != null && immersive.handleKey(event))
+            return true;
         if (handlePointerCaptureBackKey(event))
             return true;
         if (keyCode == KeyEvent.KEYCODE_BACK && isMouseKeyEvent(event))
