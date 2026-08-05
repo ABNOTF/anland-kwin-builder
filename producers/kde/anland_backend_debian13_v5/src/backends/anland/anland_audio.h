@@ -16,7 +16,7 @@
  * stream simply drops its PCM and the source feeds silence, so PipeWire (and every
  * recording app) never sees the device disappear. Only the socket fd is hot-swapped:
  * anland_audio_set_fd(fd) on (re)connect, anland_audio_set_fd(-1) on fallback. The fd
- * is borrowed -- the engine never closes it (display_producer owns its lifetime).
+ * is borrowed from display_producer; the engine owns a CLOEXEC duplicate while attached.
  */
 
 #ifdef __cplusplus
