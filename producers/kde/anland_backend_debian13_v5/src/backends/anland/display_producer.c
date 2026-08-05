@@ -33,12 +33,14 @@ struct display_ctx {
     struct buf_info dmabuf_infos[MAX_BUFS];
     int      buf_count;
 
+    void (*pre_release_cb)(void *);
+    void  *pre_release_userdata;
     void (*fallback_cb)(void *);
     void  *fallback_userdata;
 };
 
 /*
- * Release every consumer-side resource (dmabuf fds, the four picked-up fds and the
+ * Release every consumer-side resource (dmabuf fds, the five picked-up fds and the
  * shm mapping), leaving the context holding only the daemon ctrl_fd. Does NOT touch
  * the fallback flag or fire the fallback callback — callers decide that. Idempotent.
  */
@@ -66,6 +68,9 @@ static void enter_fallback(display_ctx *ctx)
     if (ctx->fallback)
         return;
     ctx->fallback = true;
+
+    if (ctx->pre_release_cb)
+        ctx->pre_release_cb(ctx->pre_release_userdata);
 
     release_consumer_resources(ctx);
 
@@ -432,6 +437,13 @@ int poll_input_event_extend_data(display_ctx *ctx, void *payload, size_t size, i
     if (recv_all(ctx->data_fd, payload, size) < 0)
         return -1;
     return 1;
+}
+
+int set_pre_release_callback(display_ctx *ctx, void (*on_pre_release)(void *), void *userdata)
+{
+    ctx->pre_release_cb = on_pre_release;
+    ctx->pre_release_userdata = userdata;
+    return 0;
 }
 
 int set_fallback_callback(display_ctx *ctx, void (*on_fallback)(void *), void *userdata)

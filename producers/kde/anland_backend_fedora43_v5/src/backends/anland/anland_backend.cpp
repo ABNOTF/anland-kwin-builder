@@ -84,6 +84,11 @@ static std::unique_ptr<RenderDevice> openRenderDevice()
     return RenderDevice::open(QStringLiteral("/dev/dri/renderD128"));
 }
 
+static void detachAudioBeforeConsumerRelease(void *)
+{
+    anland_audio_set_fd(-1);
+}
+
 AnlandBackend::AnlandBackend(const QString &socketPath, QObject *parent)
     : OutputBackend(parent)
     , m_socketPath(socketPath.isEmpty() ? s_defaultSocketPath : socketPath)
@@ -117,6 +122,7 @@ bool AnlandBackend::initialize()
         return false;
     }
 
+    set_pre_release_callback(m_display, detachAudioBeforeConsumerRelease, nullptr);
     set_fallback_callback(m_display, &AnlandBackend::fallbackTrampoline, this);
 
     uint32_t w = 0, h = 0, fmt = 0, refresh = 0;
@@ -466,9 +472,8 @@ void AnlandBackend::enterFallback()
     m_consumerReady = false;
     m_inFallback = true;
 
-    // Detach the audio socket: the streams keep running (capture drops its PCM, the
-    // mic Source feeds silence) so PipeWire never perceives the disconnect.
-    anland_audio_set_fd(-1);
+    // Audio is already detached: startup has no consumer socket, and a consumer
+    // loss detaches the source before display_producer closes its borrowed fd.
 
     // The consumer's camera fds are now dead: stop recording, destroy the virtual
     // camera nodes and close the fds. New ones arrive on the next reconnect.
