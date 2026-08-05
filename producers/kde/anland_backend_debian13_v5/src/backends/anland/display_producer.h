@@ -58,8 +58,12 @@ int  push_resources_request(display_ctx *ctx, uint32_t service_type, const uint3
 int  push_output_event(display_ctx *ctx, const struct OutputEvent *event);
 int  push_output_event_with_length(display_ctx *ctx, const struct OutputEvent *event, void *payload, size_t size);
 
+/* Register a callback invoked after fallback is set but before consumer-owned fds
+ * are closed. It must not re-enter display_producer. */
+int  set_pre_release_callback(display_ctx *ctx, void (*on_pre_release)(void *), void *userdata);
+
 /* Register a callback invoked when the consumer is lost and the context drops
- * back to fallback. */
+ * back to fallback, after its consumer-owned resources are released. */
 int  set_fallback_callback(display_ctx *ctx, void (*on_fallback)(void *), void *userdata);
 
 bool is_fallback(display_ctx *ctx);
