@@ -807,10 +807,12 @@ int anland_camera_start(void)
     return 0;
 
 fail:
-    if (c->loop)
-        pw_thread_loop_destroy(c->loop);
+    if (c->reconnect_timer)
+        pw_loop_destroy_source(pw_thread_loop_get_loop(c->loop), c->reconnect_timer);
     if (c->context)
         pw_context_destroy(c->context);
+    if (c->loop)
+        pw_thread_loop_destroy(c->loop);
     free(c);
     pw_deinit();
     return -1;

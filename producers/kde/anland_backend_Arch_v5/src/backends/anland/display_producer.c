@@ -33,12 +33,14 @@ struct display_ctx {
     struct buf_info dmabuf_infos[MAX_BUFS];
     int      buf_count;
 
+    void (*pre_release_cb)(void *);
+    void  *pre_release_userdata;
     void (*fallback_cb)(void *);
     void  *fallback_userdata;
 };
 
 /*
- * Release every consumer-side resource (dmabuf fds, the four picked-up fds and the
+ * Release every consumer-side resource (dmabuf fds, the five picked-up fds and the
  * shm mapping), leaving the context holding only the daemon ctrl_fd. Does NOT touch
  * the fallback flag or fire the fallback callback — callers decide that. Idempotent.
  */
@@ -67,6 +69,9 @@ static void enter_fallback(display_ctx *ctx)
         return;
     ctx->fallback = true;
 
+    if (ctx->pre_release_cb)
+        ctx->pre_release_cb(ctx->pre_release_userdata);
+
     release_consumer_resources(ctx);
 
     if (ctx->fallback_cb)
@@ -93,7 +98,8 @@ static int pickup_fds(display_ctx *ctx)
     int fd_count = 0;
     struct ctrl_msg resp;
     int n = recv_fds(ctx->ctrl_fd, &resp, sizeof(resp), fds, 5, &fd_count);
-    if (n <= 0 || resp.type != CTRL_MSG_FDS_READY || fd_count < 5) {
+    if (n < (int)sizeof(resp) || resp.type != CTRL_MSG_FDS_READY
+        || resp.size != 0 || fd_count != 5) {
         for (int i = 0; i < fd_count; i++)
             close(fds[i]);
         return -1;
@@ -137,10 +143,19 @@ static int receive_dmabufs(display_ctx *ctx)
     int fd_count = 0;
 
     int n = recv_fds(ctx->data_fd, &dhdr, sizeof(dhdr), fds, MAX_BUFS, &fd_count);
-    if (n < (int)sizeof(struct data_msg) || fd_count < 1)
+    if (n < (int)sizeof(struct data_msg) || fd_count < 1) {
+        for (int i = 0; i < fd_count; i++)
+            close(fds[i]);
         return -1;
+    }
 
     if (dhdr.type != DATA_MSG_BUFS_READY) {
+        for (int i = 0; i < fd_count; i++)
+            close(fds[i]);
+        return -1;
+    }
+
+    if (dhdr.size == 0 || dhdr.size % sizeof(struct buf_info) != 0) {
         for (int i = 0; i < fd_count; i++)
             close(fds[i]);
         return -1;
@@ -285,10 +300,14 @@ int trigger_refresh(display_ctx *ctx)
         c->cmsg_len = CMSG_LEN(sizeof(int));
         memcpy(CMSG_DATA(c), &ctx->pending_render_fence, sizeof(int));
     }
-    sendmsg(ctx->fence_fd, &msg, MSG_NOSIGNAL | MSG_DONTWAIT);
+    const ssize_t sent = sendmsg(ctx->fence_fd, &msg, MSG_NOSIGNAL | MSG_DONTWAIT);
     if (ctx->pending_render_fence >= 0) {
         close(ctx->pending_render_fence);
         ctx->pending_render_fence = -1;
+    }
+    if (sent != (ssize_t)iov.iov_len) {
+        enter_fallback(ctx);
+        return -1;
     }
     return 0;
 }
@@ -434,6 +453,13 @@ int poll_input_event_extend_data(display_ctx *ctx, void *payload, size_t size, i
     return 1;
 }
 
+int set_pre_release_callback(display_ctx *ctx, void (*on_pre_release)(void *), void *userdata)
+{
+    ctx->pre_release_cb = on_pre_release;
+    ctx->pre_release_userdata = userdata;
+    return 0;
+}
+
 int set_fallback_callback(display_ctx *ctx, void (*on_fallback)(void *), void *userdata)
 {
     ctx->fallback_cb = on_fallback;
@@ -444,6 +470,17 @@ int set_fallback_callback(display_ctx *ctx, void (*on_fallback)(void *), void *u
 bool is_fallback(display_ctx *ctx)
 {
     return ctx->fallback;
+}
+
+void force_fallback(display_ctx *ctx)
+{
+    if (!ctx || ctx->fallback)
+        return;
+
+    ctx->fallback = true;
+    if (ctx->pre_release_cb)
+        ctx->pre_release_cb(ctx->pre_release_userdata);
+    release_consumer_resources(ctx);
 }
 
 int try_exit_fallback(display_ctx *ctx)
