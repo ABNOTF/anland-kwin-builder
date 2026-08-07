@@ -88,6 +88,11 @@ static std::unique_ptr<DrmDevice> openRenderDevice()
     return DrmDevice::open(QStringLiteral("/dev/dri/renderD128"));
 }
 
+static void detachAudioBeforeConsumerRelease(void *)
+{
+    anland_audio_set_fd(-1);
+}
+
 AnlandBackend::AnlandBackend(const QString &socketPath, QObject *parent)
     : OutputBackend(parent)
     , m_socketPath(socketPath.isEmpty() ? s_defaultSocketPath : socketPath)
@@ -97,14 +102,18 @@ AnlandBackend::AnlandBackend(const QString &socketPath, QObject *parent)
 AnlandBackend::~AnlandBackend()
 {
     teardownNotifiers();
-    // Stop the audio engine before disconnect() closes the audio fd it borrows.
+    // Stop the audio engine before disconnect() releases the consumer audio fd.
     anland_audio_stop();
     // Stop the camera engine (it owns its own resource fds; closes them itself).
     anland_camera_stop();
     if (m_reconnectTimer) {
         m_reconnectTimer->stop();
     }
-    // m_outputs are QObject children of this backend; ~QObject deletes them.
+    // Drop EGL resources while the render device is still alive. The output
+    // objects remain QObject children and are deleted by ~QObject afterwards.
+    for (AnlandOutput *output : std::as_const(m_outputs)) {
+        output->setEglLayer(std::unique_ptr<AnlandEglLayer>{});
+    }
     m_outputs.clear();
     m_inputDevice.reset();
     if (m_display) {
@@ -122,6 +131,7 @@ bool AnlandBackend::initialize()
         return false;
     }
 
+    set_pre_release_callback(m_display, detachAudioBeforeConsumerRelease, nullptr);
     set_fallback_callback(m_display, &AnlandBackend::fallbackTrampoline, this);
 
     uint32_t w = 0, h = 0, fmt = 0, refresh = 0;
@@ -170,10 +180,15 @@ bool AnlandBackend::initialize()
     // Bring up the audio engine up front: its PipeWire sink-monitor capture and
     // virtual mic Source live for the whole session, independent of the consumer,
     // so Linux apps never see the devices appear/disappear as the consumer comes and
-    // goes. The socket fd is attached later (onReconnectTimer) and detached in
-    // enterFallback(). Audio is non-critical, so a failure here is not fatal.
-    if (anland_audio_start() < 0) {
+    // goes. The socket fd is attached later (onReconnectTimer) and detached by
+    // the transport before it closes a consumer fd. Audio is non-critical, so a
+    // failure here is not fatal.
+    const bool disableAudio = qEnvironmentVariableIsSet("ANLAND_DISABLE_AUDIO")
+        && qEnvironmentVariableIntValue("ANLAND_DISABLE_AUDIO") != 0;
+    if (!disableAudio && anland_audio_start() < 0) {
         qCWarning(KWIN_ANLAND) << "failed to start audio engine; continuing without audio";
+    } else if (disableAudio) {
+        qCInfo(KWIN_ANLAND) << "anland audio engine disabled by ANLAND_DISABLE_AUDIO";
     }
 
     // The camera engine is NOT started here: its PipeWire thread-loop is brought up
@@ -233,11 +248,44 @@ DrmDevice *AnlandBackend::drmDevice() const
 
 bool AnlandBackend::notifyFramePresented()
 {
-    if (m_consumerReady) {
-        trigger_refresh(m_display);
+    if (m_consumerReady && m_display) {
         m_consumerReady = false;
+        if (trigger_refresh(m_display) < 0) {
+            return false;
+        }
         return true;
     }
+    return false;
+}
+
+bool AnlandBackend::isConsumerConnected() const
+{
+    return m_display && !m_inFallback && !is_fallback(m_display);
+}
+
+bool AnlandBackend::importBuffers(AnlandEglLayer *layer)
+{
+    if (!layer) {
+        return true;
+    }
+    if (!isConsumerConnected()) {
+        return false;
+    }
+
+    const int count = get_buf_count(m_display);
+    if (count <= 0 || count > MAX_BUFS) {
+        qCWarning(KWIN_ANLAND) << "consumer reported invalid dmabuf count" << count;
+    } else if (layer->importBuffers(count)) {
+        return true;
+    } else {
+        qCWarning(KWIN_ANLAND) << "failed to import the consumer dmabuf set";
+    }
+
+    // Keep the C protocol state and KWin's fallback state in sync. Without
+    // this, the reconnect timer would stop while the stale fds stayed live.
+    force_fallback(m_display);
+    m_inFallback = false;
+    enterFallback();
     return false;
 }
 
@@ -356,7 +404,9 @@ void AnlandBackend::processInputEvent(const InputEvent &ev)
     case INPUT_TYPE_DISPLAY_REFRESH:
         // Not an input event: the consumer reports its live display refresh rate
         // (mHz) so we can repace the RenderLoop.
-        m_outputs[0]->setRefreshRate(static_cast<int>(ev.display.refresh_mhz));
+        if (!m_outputs.isEmpty()) {
+            m_outputs[0]->setRefreshRate(static_cast<int>(ev.display.refresh_mhz));
+        }
         break;
     case INPUT_TYPE_CLIPBOARD: {
         const uint32_t size = ev.clipboard.size;
@@ -413,7 +463,7 @@ void AnlandBackend::processInputEvent(const InputEvent &ev)
 
 void AnlandBackend::onBufferReady()
 {
-    if (m_inFallback) {
+    if (m_inFallback || m_outputs.isEmpty()) {
         return;
     }
 
@@ -431,7 +481,9 @@ void AnlandBackend::onBufferReady()
     // Buffer-ready is our frame-completion signal: complete the in-flight frame
     // (if any) and schedule the next one, keeping the render cycle paced by the
     // consumer rather than a timer.
-    m_outputs[0]->onConsumerReady();
+    if (!m_outputs.isEmpty()) {
+        m_outputs[0]->onConsumerReady();
+    }
 }
 
 void AnlandBackend::fallbackTrampoline(void *data)
@@ -452,22 +504,25 @@ void AnlandBackend::enterFallback()
 
     // A frame may be in flight awaiting a buffer-ready that will never come now;
     // fail it so the RenderLoop's frame accounting does not stall.
-    m_outputs[0]->stopRendering();
+    if (!m_outputs.isEmpty()) {
+        m_outputs[0]->stopRendering();
+    }
 
     teardownNotifiers();
 
     // Renderer is stopped: drop the imported dmabuf set now that the producer's fds
     // are gone. The layer is null at startup (no GL backend attached yet).
-    if (AnlandEglLayer *layer = m_outputs[0]->eglLayer()) {
-        layer->releaseBuffers();
+    if (!m_outputs.isEmpty()) {
+        if (AnlandEglLayer *layer = m_outputs[0]->eglLayer()) {
+            layer->releaseBuffers();
+        }
     }
 
     m_consumerReady = false;
     m_inFallback = true;
 
-    // Detach the audio socket: the streams keep running (capture drops its PCM, the
-    // mic Source feeds silence) so PipeWire never perceives the disconnect.
-    anland_audio_set_fd(-1);
+    // The transport detaches audio before closing its borrowed consumer fd. At
+    // startup no consumer fd exists yet, so nothing needs to be detached here.
 
     // The consumer's camera fds are now dead: stop recording, detach from the
     // resource fds and let the virtual camera nodes emit blank frames.
@@ -501,9 +556,9 @@ void AnlandBackend::onReconnectTimer()
     // true so the next composite() paints into the new dmabufs even on an idle
     // desktop. resumeRendering() runs unconditionally to keep inhibit/uninhibit
     // balanced regardless of whether the GL layer is attached yet.
-    AnlandEglLayer *layer = m_outputs[0]->eglLayer();
-    if (layer) {
-        layer->importBuffers(get_buf_count(m_display));
+    AnlandEglLayer *layer = m_outputs.isEmpty() ? nullptr : m_outputs[0]->eglLayer();
+    if (layer && !importBuffers(layer)) {
+        return;
     }
     setupNotifiers();
     // Attach the fresh audio socket (a new socketpair was installed by pickup_fds).
@@ -513,8 +568,18 @@ void AnlandBackend::onReconnectTimer()
     // event whose fds onInputReadable() hands to the camera engine. If the consumer
     // has the camera disabled it simply never registers the service and never replies,
     // so this is a harmless no-op in that case.
-    push_resources_request(m_display, SERVICE_TYPE_CAMERA, nullptr);
-    m_outputs[0]->resumeRendering();
+    if (push_resources_request(m_display, SERVICE_TYPE_CAMERA, nullptr) < 0 || m_inFallback) {
+        return;
+    }
+    // Selection changes may have happened while the consumer was away. Force a
+    // fresh read even when the current source is the remote source we created.
+    onClipboardChanged(true);
+    if (m_inFallback) {
+        return;
+    }
+    if (!m_outputs.isEmpty()) {
+        m_outputs[0]->resumeRendering();
+    }
     if (layer) {
         layer->addDeviceRepaint(Region::infinite());
     }
@@ -604,19 +669,24 @@ static QByteArray requestClipboardText(AbstractDataSource *source)
     return readDataFromFd(FileDescriptor(pipeFds[0]));
 }
 
-void AnlandBackend::onClipboardChanged()
+void AnlandBackend::onClipboardChanged(bool force)
 {
     if (m_inFallback) {
         return;
     }
 
-    AbstractDataSource *source = waylandServer()->seat()->selection();
-    if (source == m_clipboardSource.get()) {
+    SeatInterface *seat = waylandServer() ? waylandServer()->seat() : nullptr;
+    if (!seat) {
+        return;
+    }
+
+    AbstractDataSource *source = seat->selection();
+    if (!force && source == m_clipboardSource.get()) {
         return;
     }
 
     const QByteArray text = requestClipboardText(source);
-    if (text == m_clipboardText) {
+    if (!force && text == m_clipboardText) {
         return;
     }
 

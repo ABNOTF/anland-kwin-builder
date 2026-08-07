@@ -20,6 +20,7 @@
 #include "utils/filedescriptor.h"
 
 #include <drm_fourcc.h>
+#include <fcntl.h>
 #include <unistd.h>
 
 #ifndef EGL_PLATFORM_SURFACELESS_MESA
@@ -55,7 +56,9 @@ AnlandEglLayer::~AnlandEglLayer()
 
 void AnlandEglLayer::releaseBuffers()
 {
-    m_backend->openglContext()->makeCurrent();
+    if (auto *context = m_backend->openglContext()) {
+        context->makeCurrent();
+    }
 
     for (int i = 0; i < MAX_BUFS; i++) {
         m_fbos[i].reset();
@@ -67,7 +70,18 @@ void AnlandEglLayer::releaseBuffers()
 
 bool AnlandEglLayer::importBuffers(int count)
 {
-    m_backend->openglContext()->makeCurrent();
+    if (count <= 0 || count > MAX_BUFS) {
+        qCWarning(KWIN_ANLAND) << "invalid dmabuf count" << count;
+        releaseBuffers();
+        return false;
+    }
+
+    auto *context = m_backend->openglContext();
+    if (!context || !context->makeCurrent()) {
+        qCWarning(KWIN_ANLAND) << "cannot make the EGL context current while importing dmabufs";
+        releaseBuffers();
+        return false;
+    }
 
     releaseBuffers();
 
@@ -97,7 +111,13 @@ bool AnlandEglLayer::importBuffers(int count)
         attrs.height = actual.height();
         attrs.format = protocol_format_to_drm(info.format);
         attrs.modifier = info.modifier;
-        attrs.fd[0] = FileDescriptor(dup(fd));
+        const int importedFd = fcntl(fd, F_DUPFD_CLOEXEC, 3);
+        if (importedFd < 0) {
+            qCWarning(KWIN_ANLAND) << "failed to duplicate dmabuf" << i;
+            releaseBuffers();
+            return false;
+        }
+        attrs.fd[0] = FileDescriptor(importedFd);
         attrs.offset[0] = static_cast<int>(info.offset);
         attrs.pitch[0] = static_cast<int>(info.stride);
 
@@ -131,7 +151,9 @@ void AnlandEglLayer::onOutputTransformChanged()
 {
     const OutputTransform contentTransform = m_output->transform().combine(OutputTransform::FlipY);
     for (int i = 0; i < m_bufCount; i++) {
-        m_textures[i]->setContentTransform(contentTransform);
+        if (m_textures[i]) {
+            m_textures[i]->setContentTransform(contentTransform);
+        }
         m_accumDamage[i] = Region::infinite();
     }
     addDeviceRepaint(Region::infinite());
@@ -139,7 +161,10 @@ void AnlandEglLayer::onOutputTransformChanged()
 
 std::optional<OutputLayerBeginFrameInfo> AnlandEglLayer::doBeginFrame()
 {
-    m_backend->openglContext()->makeCurrent();
+    auto *context = m_backend->openglContext();
+    if (!context || !context->makeCurrent()) {
+        return std::nullopt;
+    }
 
     if (m_bufCount == 0) {
         return std::nullopt;
@@ -160,6 +185,9 @@ bool AnlandEglLayer::doEndFrame(const Region &renderedDeviceRegion, const Region
 {
     Q_UNUSED(renderedDeviceRegion)
     Q_UNUSED(frame)
+    if (m_bufCount == 0 || !m_backend->openglContext()) {
+        return false;
+    }
     glFlush();
     for (int i = 0; i < m_bufCount; i++) {
         m_accumDamage[i] = m_accumDamage[i] + damagedDeviceRegion;
@@ -187,11 +215,14 @@ DrmDevice *AnlandEglLayer::scanoutDevice() const
 
 FormatModifierMap AnlandEglLayer::supportedDrmFormats() const
 {
-    return {};
+    return m_backend->supportedFormats();
 }
 
 std::shared_ptr<GLTexture> AnlandEglLayer::texture() const
 {
+    if (m_currentIndex < 0 || m_currentIndex >= m_bufCount) {
+        return nullptr;
+    }
     return m_textures[m_currentIndex];
 }
 
@@ -258,6 +289,13 @@ void AnlandEglBackend::addOutput(BackendOutput *output)
     openglContext()->makeCurrent();
     auto *anlandOutput = static_cast<AnlandOutput *>(output);
     anlandOutput->setEglLayer(std::make_unique<AnlandEglLayer>(anlandOutput, this));
+
+    // The consumer may have connected before the GL backend created its
+    // output layer. Import the already-held dmabufs here as well as on the
+    // reconnect path, otherwise the first connection would never render.
+    if (m_backend->isConsumerConnected()) {
+        m_backend->importBuffers(anlandOutput->eglLayer());
+    }
 }
 
 QList<OutputLayer *> AnlandEglBackend::compatibleOutputLayers(BackendOutput *output)

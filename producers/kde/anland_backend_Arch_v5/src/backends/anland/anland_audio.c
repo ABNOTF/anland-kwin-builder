@@ -3,6 +3,7 @@
 #include "protocol.h"
 
 #include <errno.h>
+#include <fcntl.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -50,7 +51,7 @@ struct anland_audio {
      * 0 = let PipeWire choose the graph quantum. Applied as node.latency. */
     uint32_t               play_quantum, cap_quantum;
 
-    int                    audio_fd;  /* borrowed; -1 when detached */
+    int                    audio_fd;  /* owned duplicate; -1 when detached */
     struct spa_source     *io;        /* loop io source watching audio_fd for reads */
 
     /* Mic ring buffer. Only ever touched from the loop thread (the io read callback
@@ -109,7 +110,19 @@ static size_t ring_read(struct anland_audio *a, uint8_t *p, size_t n)
     return got;
 }
 
-/* ---- stream process callbacks (run on the loop thread, RT context) ---- */
+/* The caller holds the thread-loop lock, or is executing on that loop. The io
+ * source owns audio_fd, so destroying it also closes the duplicated descriptor. */
+static void detach_audio_fd_locked(struct anland_audio *a)
+{
+    struct spa_source *io = a->io;
+    a->io = NULL;
+    a->audio_fd = -1;
+    ring_reset(a);
+    if (io)
+        pw_loop_destroy_source(pw_thread_loop_get_loop(a->loop), io);
+}
+
+/* ---- stream process callbacks (run on the PipeWire thread loop) ---- */
 
 /* Desktop audio captured from the default sink's monitor -> push to the socket so
  * the consumer plays it. Dropped (still drained) while detached. */
@@ -232,15 +245,28 @@ static void apply_format(struct anland_audio *a, const struct audio_format *f)
 static void on_audio_readable(void *data, int fd, uint32_t mask)
 {
     struct anland_audio *a = data;
-    if (mask & (SPA_IO_ERR | SPA_IO_HUP))
+    if (fd != a->audio_fd)
         return;
+    if (mask & (SPA_IO_ERR | SPA_IO_HUP)) {
+        detach_audio_fd_locked(a);
+        return;
+    }
     if (!(mask & SPA_IO_IN))
         return;
 
     for (;;) {
         ssize_t n = recv(fd, a->rx, sizeof(a->rx), MSG_DONTWAIT);
-        if (n <= 0)
+        if (n == 0) {
+            detach_audio_fd_locked(a);
             break;
+        }
+        if (n < 0) {
+            if (errno == EINTR)
+                continue;
+            if (errno != EAGAIN && errno != EWOULDBLOCK)
+                detach_audio_fd_locked(a);
+            break;
+        }
         if ((size_t)n < sizeof(struct audio_msg))
             continue;
         struct audio_msg h;
@@ -335,8 +361,7 @@ static int connect_stream(struct pw_stream *stream, enum spa_direction direction
     const struct spa_pod *params[1] = { build_format(&bld, rate, channels) };
 
     return pw_stream_connect(stream, direction, PW_ID_ANY,
-                             PW_STREAM_FLAG_AUTOCONNECT | PW_STREAM_FLAG_MAP_BUFFERS |
-                                 PW_STREAM_FLAG_RT_PROCESS,
+                             PW_STREAM_FLAG_AUTOCONNECT | PW_STREAM_FLAG_MAP_BUFFERS,
                              params, 1);
 }
 
@@ -436,20 +461,24 @@ void anland_audio_set_fd(int audio_fd)
 
     pw_thread_loop_lock(a->loop);
 
-    struct pw_loop *loop = pw_thread_loop_get_loop(a->loop);
-    if (a->io) {
-        pw_loop_destroy_source(loop, a->io);
-        a->io = NULL;
-    }
-    a->audio_fd = audio_fd;
-    ring_reset(a);   /* drop stale mic audio across a reconnect */
+    detach_audio_fd_locked(a);
 
     if (audio_fd >= 0) {
-        /* close=false: the fd is borrowed from display_producer, never closed here.
-         * The consumer announces both device formats (AUDIO_MSG_FORMAT) right after
+        /* display_producer retains the input fd. Keep an owned duplicate so source
+         * teardown cannot race with producer fd reuse during fallback. The consumer
+         * announces both device formats (AUDIO_MSG_FORMAT) right after
          * this socket comes up; on_audio_readable applies them and reconfigures the
          * PipeWire streams, so we don't dictate any format here. */
-        a->io = pw_loop_add_io(loop, audio_fd, SPA_IO_IN, false, on_audio_readable, a);
+        int owned_fd = fcntl(audio_fd, F_DUPFD_CLOEXEC, 3);
+        if (owned_fd >= 0) {
+            a->io = pw_loop_add_io(pw_thread_loop_get_loop(a->loop), owned_fd,
+                                   SPA_IO_IN, true, on_audio_readable, a);
+            if (a->io) {
+                a->audio_fd = owned_fd;
+            } else {
+                close(owned_fd);
+            }
+        }
     }
 
     pw_thread_loop_unlock(a->loop);
@@ -507,10 +536,12 @@ int anland_audio_start(void)
     return 0;
 
 fail:
-    if (a->loop)
-        pw_thread_loop_destroy(a->loop);
+    if (a->reconnect_timer)
+        pw_loop_destroy_source(pw_thread_loop_get_loop(a->loop), a->reconnect_timer);
     if (a->context)
         pw_context_destroy(a->context);
+    if (a->loop)
+        pw_thread_loop_destroy(a->loop);
     free(a->ring);
     free(a);
     pw_deinit();
@@ -528,7 +559,7 @@ void anland_audio_stop(void)
         pw_thread_loop_stop(a->loop);
     teardown_pw(a);
     if (a->io)
-        pw_loop_destroy_source(pw_thread_loop_get_loop(a->loop), a->io);
+        detach_audio_fd_locked(a);
     if (a->reconnect_timer)
         pw_loop_destroy_source(pw_thread_loop_get_loop(a->loop), a->reconnect_timer);
     if (a->context)

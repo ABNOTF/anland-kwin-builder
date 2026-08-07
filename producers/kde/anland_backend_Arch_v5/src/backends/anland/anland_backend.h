@@ -30,6 +30,7 @@ namespace KWin
 {
 
 class AnlandOutput;
+class AnlandEglLayer;
 class AnlandInputDevice;
 class AbstractDataSource;
 class DrmDevice;
@@ -82,6 +83,12 @@ public:
      */
     bool notifyFramePresented();
 
+    /** True while the consumer fds and dmabufs are available for rendering. */
+    bool isConsumerConnected() const;
+
+    /** Import the current consumer dmabufs into a newly attached EGL layer. */
+    bool importBuffers(AnlandEglLayer *layer);
+
     /** Re-run the Workspace output layout after an output changed its mode at
      *  runtime (AnlandOutput::resize). The backend mutates the mode directly via
      *  setState() instead of going through OutputConfiguration, so it must emit
@@ -103,7 +110,7 @@ private:
     void onReconnectTimer();
     void enterFallback();
 
-    void onClipboardChanged();
+    void onClipboardChanged(bool force = false);
     void sendClipboardToConsumer(const QByteArray &text);
     void sendClipboardToKWin(const QByteArray &text);
     void sendTextInputToKWin(const QByteArray &text);
