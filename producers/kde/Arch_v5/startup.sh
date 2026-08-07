@@ -7,8 +7,8 @@
 #   ./startup.sh [socket path]          (default /run/display.sock)
 # Env:
 #   KWIN_BIN     path to kwin_wayland (default: the one installed in PATH)
-#   ANLAND_SOCKET, ANLAND_DRM_DEVICE
-set -u
+#   ANLAND_SOCKET, ANLAND_DRM_DEVICE, XWAYLAND_GBM_DEVICE
+set -eu
 
 SOCK="${1:-${ANLAND_SOCKET:-/run/display.sock}}"
 KWIN_BIN="${KWIN_BIN:-kwin_wayland}"
@@ -20,9 +20,12 @@ command -v "$KWIN_BIN" >/dev/null 2>&1 || {
 
 export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
 if [ ! -d "$XDG_RUNTIME_DIR" ]; then
-    sudo mkdir -p "$XDG_RUNTIME_DIR"
-    sudo chown "$(id -u):$(id -g)" "$XDG_RUNTIME_DIR"
-    sudo chmod 0700 "$XDG_RUNTIME_DIR"
+    # Fresh DroidSpaces containers commonly lack a logind-created /run/user
+    # directory. Keep the Wayland runtime directory private without requiring
+    # a password or widening the launcher privileges.
+    XDG_RUNTIME_DIR="$HOME/.local/run/anland-$(id -u)"
+    mkdir -p "$XDG_RUNTIME_DIR"
+    chmod 0700 "$XDG_RUNTIME_DIR"
 fi
 
 # kgsl/turnip (Adreno) environment
@@ -36,10 +39,13 @@ export XCURSOR_SIZE=24
 export QT_QPA_PLATFORM=wayland
 export ANLAND_SOCKET="$SOCK"
 export ANLAND_DRM_DEVICE="${ANLAND_DRM_DEVICE:-/dev/dri/renderD128}"
+# Xwayland inherits this from KWin and uses it when linux-dmabuf feedback has
+# no usable DRM render node on the kgsl/turnip stack.
+export XWAYLAND_GBM_DEVICE="${XWAYLAND_GBM_DEVICE:-$ANLAND_DRM_DEVICE}"
 unset DISPLAY
 
-echo "==> $KWIN_BIN --anland (socket=$SOCK, drm=$ANLAND_DRM_DEVICE)"
-"$KWIN_BIN" --anland &
+echo "==> $KWIN_BIN --anland --xwayland (socket=$SOCK, drm=$ANLAND_DRM_DEVICE)"
+"$KWIN_BIN" --anland --xwayland &
 KWIN_PID=$!
 
 WAYLAND_SOCKET=""

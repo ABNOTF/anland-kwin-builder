@@ -1,3 +1,6 @@
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
 #include "socket_utils.h"
 
 #include <errno.h>
@@ -53,7 +56,7 @@ int recv_fds(int sock, void *data, size_t data_len,
         .msg_controllen = sizeof(cmsg_buf),
     };
 
-    ssize_t n = recvmsg(sock, &msg, 0);
+    ssize_t n = recvmsg(sock, &msg, MSG_CMSG_CLOEXEC);
     if (n <= 0)
         return -1;
 
@@ -72,7 +75,7 @@ int recv_fds(int sock, void *data, size_t data_len,
 
 int connect_unix(const char *path)
 {
-    int fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    int fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
     if (fd < 0)
         return -1;
 
