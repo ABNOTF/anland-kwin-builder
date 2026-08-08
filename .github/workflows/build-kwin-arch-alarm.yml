@@ -100,14 +100,14 @@ jobs:
             echo "--- packages dir (inside chroot) ---"
             ls -la /home/builder/.cache/anland/kwin-arch/packages/ || true
             mkdir -p /root/packages
-            cp -v /home/builder/.cache/anland/kwin-arch/packages/*.pkg.tar.zst /root/packages/ || true
+            cp -v /home/builder/.cache/anland/kwin-arch/packages/*.pkg.tar.* /root/packages/ || true
           '
 
       - name: Collect packages
         run: |
           mkdir -p /home/runner/alarm/packages
           sudo find /home/runner/alarm/rootfs/root/packages \
-            -name '*.pkg.tar.zst' -exec cp {} /home/runner/alarm/packages/ \;
+            -name '*.pkg.tar.*' -exec cp {} /home/runner/alarm/packages/ \;
           ls -lh /home/runner/alarm/packages/
           test -n "$(ls /home/runner/alarm/packages/)" || { echo 'no packages produced'; exit 1; }
 
@@ -115,6 +115,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: anland-kwin-arch-aarch64
-          path: /home/runner/alarm/packages/*.pkg.tar.zst
+          path: /home/runner/alarm/packages/*.pkg.tar.*
           if-no-files-found: error
           retention-days: 14
