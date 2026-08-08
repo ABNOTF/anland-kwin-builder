@@ -78,6 +78,9 @@ jobs:
             sed -i "s/^#DisableSandbox/DisableSandbox/" /etc/pacman.conf
             grep -q "^DisableSandbox" /etc/pacman.conf || \
               sed -i "/^\[options\]/a DisableSandbox" /etc/pacman.conf
+            # chroot 里 /proc/self/mountinfo 是宿主机挂载表，pacman 空间检查会误判，
+            # 直接关掉 CheckSpace
+            sed -i "s/^CheckSpace/#CheckSpace/" /etc/pacman.conf
             echo "--- resolver in chroot ---"
             cat /etc/resolv.conf
             getent hosts mirror.archlinuxarm.org || echo "RESOLVE_FAILED"
