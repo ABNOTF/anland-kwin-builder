@@ -78,9 +78,9 @@ jobs:
             sed -i "s/^#DisableSandbox/DisableSandbox/" /etc/pacman.conf
             grep -q "^DisableSandbox" /etc/pacman.conf || \
               sed -i "/^\[options\]/a DisableSandbox" /etc/pacman.conf
-            echo '--- resolver in chroot ---'
+            echo "--- resolver in chroot ---"
             cat /etc/resolv.conf
-            getent hosts mirror.archlinuxarm.org || echo 'RESOLVE_FAILED'
+            getent hosts mirror.archlinuxarm.org || echo "RESOLVE_FAILED"
             pacman-key --init
             pacman-key --populate archlinuxarm
             pacman -Sy --noconfirm archlinuxarm-keyring
