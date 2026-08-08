@@ -95,13 +95,18 @@ jobs:
 
       - name: Build kwin + xwayland packages (emulated)
         run: |
-          sudo chroot /home/runner/alarm/rootfs /bin/su - builder -c \
-            "cd ~/anland/producers/kde/Arch_v5 && INSTALL=0 JOBS=\$(nproc) ./build.sh"
+          sudo chroot /home/runner/alarm/rootfs /bin/bash -c '
+            su builder -c "cd ~/anland/producers/kde/Arch_v5 && INSTALL=0 JOBS=\$(nproc) ./build.sh"
+            echo "--- packages dir (inside chroot) ---"
+            ls -la /home/builder/.cache/anland/kwin-arch/packages/ || true
+            mkdir -p /root/packages
+            cp -v /home/builder/.cache/anland/kwin-arch/packages/*.pkg.tar.zst /root/packages/ || true
+          '
 
       - name: Collect packages
         run: |
           mkdir -p /home/runner/alarm/packages
-          sudo find /home/runner/alarm/rootfs/home/builder/.cache/anland/kwin-arch/packages \
+          sudo find /home/runner/alarm/rootfs/root/packages \
             -name '*.pkg.tar.zst' -exec cp {} /home/runner/alarm/packages/ \;
           ls -lh /home/runner/alarm/packages/
           test -n "$(ls /home/runner/alarm/packages/)" || { echo 'no packages produced'; exit 1; }
