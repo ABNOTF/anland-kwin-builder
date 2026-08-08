@@ -55,8 +55,8 @@ jobs:
           sudo tar -xzf /tmp/alarm/ArchLinuxARM-aarch64-latest.tar.gz -C /tmp/alarm/rootfs
           # 让 chroot 内的 aarch64 二进制能被内核交给 qemu 解释执行
           sudo cp /usr/bin/qemu-aarch64-static /tmp/alarm/rootfs/usr/bin/
-          # chroot 里要联网，先保证 DNS 配置可用
-          sudo cp /etc/resolv.conf /tmp/alarm/rootfs/etc/resolv.conf
+          # runner 的 resolv.conf 是 stub/symlink，chroot 里不可用，直接写公共 DNS
+          printf 'nameserver 8.8.8.8\nnameserver 1.1.1.1\n' | sudo tee /tmp/alarm/rootfs/etc/resolv.conf
           # 部分工具会读 /proc、/dev（如 python、gpg）
           sudo mount --bind /proc /tmp/alarm/rootfs/proc
           sudo mount --bind /dev /tmp/alarm/rootfs/dev
