@@ -25,8 +25,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up QEMU (aarch64 user-mode + binfmt)
-        uses: docker/setup-qemu-action@v3
+      - name: Set up QEMU user-mode emulation (aarch64)
+        run: |
+          sudo mount -t binfmt_misc binfmt_misc /proc/sys/fs/binfmt_misc 2>/dev/null || true
+          sudo apt-get update
+          sudo apt-get install -y qemu-user-static
+          test -f /usr/bin/qemu-aarch64-static
+          cat /proc/sys/fs/binfmt_misc/qemu-aarch64
 
       - name: Cache ALARM rootfs tarball
         id: cache-rootfs
