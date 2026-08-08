@@ -37,42 +37,42 @@ jobs:
         id: cache-rootfs
         uses: actions/cache@v4
         with:
-          path: /tmp/alarm/ArchLinuxARM-aarch64-latest.tar.gz
+          path: /home/runner/alarm/ArchLinuxARM-aarch64-latest.tar.gz
           # 上游 tarball 更新时把 key 里的版本号 +1 即可
           key: alarm-aarch64-rootfs-v1
 
       - name: Download ALARM aarch64 rootfs
         if: steps.cache-rootfs.outputs.cache-hit != 'true'
         run: |
-          mkdir -p /tmp/alarm
-          curl -fL --retry 3 -o /tmp/alarm/ArchLinuxARM-aarch64-latest.tar.gz \
+          mkdir -p /home/runner/alarm
+          curl -fL --retry 3 -o /home/runner/alarm/ArchLinuxARM-aarch64-latest.tar.gz \
             http://os.archlinuxarm.org/os/ArchLinuxARM-aarch64-latest.tar.gz
 
       - name: Extract rootfs
         run: |
-          sudo rm -rf /tmp/alarm/rootfs
-          sudo mkdir -p /tmp/alarm/rootfs
-          sudo tar -xzf /tmp/alarm/ArchLinuxARM-aarch64-latest.tar.gz -C /tmp/alarm/rootfs
+          sudo rm -rf /home/runner/alarm/rootfs
+          sudo mkdir -p /home/runner/alarm/rootfs
+          sudo tar -xzf /home/runner/alarm/ArchLinuxARM-aarch64-latest.tar.gz -C /home/runner/alarm/rootfs
           # 让 chroot 内的 aarch64 二进制能被内核交给 qemu 解释执行
-          sudo cp /usr/bin/qemu-aarch64-static /tmp/alarm/rootfs/usr/bin/
+          sudo cp /usr/bin/qemu-aarch64-static /home/runner/alarm/rootfs/usr/bin/
           # DNS：优先复用宿主机 resolver（runner 上 systemd-resolved 监听 127.0.0.53）
-          sudo rm -f /tmp/alarm/rootfs/etc/resolv.conf
-          sudo touch /tmp/alarm/rootfs/etc/resolv.conf
-          if ! sudo mount --bind /etc/resolv.conf /tmp/alarm/rootfs/etc/resolv.conf 2>/dev/null; then
-            printf 'nameserver 8.8.8.8\nnameserver 1.1.1.1\n' | sudo tee /tmp/alarm/rootfs/etc/resolv.conf
+          sudo rm -f /home/runner/alarm/rootfs/etc/resolv.conf
+          sudo touch /home/runner/alarm/rootfs/etc/resolv.conf
+          if ! sudo mount --bind /etc/resolv.conf /home/runner/alarm/rootfs/etc/resolv.conf 2>/dev/null; then
+            printf 'nameserver 8.8.8.8\nnameserver 1.1.1.1\n' | sudo tee /home/runner/alarm/rootfs/etc/resolv.conf
           fi
           # ALARM 的 nsswitch 用 systemd-resolved 的 resolve 模块，绑上宿主机 socket 目录
           if [ -d /run/systemd/resolve ]; then
-            sudo mkdir -p /tmp/alarm/rootfs/run/systemd
-            sudo mount --bind /run/systemd/resolve /tmp/alarm/rootfs/run/systemd/resolve 2>/dev/null || true
+            sudo mkdir -p /home/runner/alarm/rootfs/run/systemd
+            sudo mount --bind /run/systemd/resolve /home/runner/alarm/rootfs/run/systemd/resolve 2>/dev/null || true
           fi
           # 部分工具会读 /proc、/dev（如 python、gpg）
-          sudo mount --bind /proc /tmp/alarm/rootfs/proc
-          sudo mount --bind /dev /tmp/alarm/rootfs/dev
+          sudo mount --bind /proc /home/runner/alarm/rootfs/proc
+          sudo mount --bind /dev /home/runner/alarm/rootfs/dev
 
       - name: Bootstrap ALARM (keyring + base-devel + sudo)
         run: |
-          sudo chroot /tmp/alarm/rootfs /bin/bash -c '
+          sudo chroot /home/runner/alarm/rootfs /bin/bash -c '
             set -e
             # GitHub runner 内核不支持 Landlock，pacman 6.1+ 的沙箱会失败，关掉它
             sed -i "s/^#DisableSandbox/DisableSandbox/" /etc/pacman.conf
@@ -96,26 +96,26 @@ jobs:
         run: |
           # 直接 bind-mount 整个仓库：Arch_v5/kwin 是指向 anland_backend_Arch_v5 的
           # 符号链接，只拷子目录会变成断链
-          sudo mkdir -p /tmp/alarm/rootfs/home/builder/anland
-          sudo mount --bind "$GITHUB_WORKSPACE" /tmp/alarm/rootfs/home/builder/anland
+          sudo mkdir -p /home/runner/alarm/rootfs/home/builder/anland
+          sudo mount --bind "$GITHUB_WORKSPACE" /home/runner/alarm/rootfs/home/builder/anland
 
       - name: Build kwin + xwayland packages (emulated)
         run: |
-          sudo chroot /tmp/alarm/rootfs /bin/su - builder -c \
+          sudo chroot /home/runner/alarm/rootfs /bin/su - builder -c \
             "cd ~/anland/producers/kde/Arch_v5 && INSTALL=0 JOBS=\$(nproc) ./build.sh"
 
       - name: Collect packages
         run: |
-          mkdir -p /tmp/alarm/packages
-          sudo find /tmp/alarm/rootfs/home/builder/.cache/anland/kwin-arch/packages \
-            -name '*.pkg.tar.zst' -exec cp {} /tmp/alarm/packages/ \;
-          ls -lh /tmp/alarm/packages/
-          test -n "$(ls /tmp/alarm/packages/)" || { echo 'no packages produced'; exit 1; }
+          mkdir -p /home/runner/alarm/packages
+          sudo find /home/runner/alarm/rootfs/home/builder/.cache/anland/kwin-arch/packages \
+            -name '*.pkg.tar.zst' -exec cp {} /home/runner/alarm/packages/ \;
+          ls -lh /home/runner/alarm/packages/
+          test -n "$(ls /home/runner/alarm/packages/)" || { echo 'no packages produced'; exit 1; }
 
       - name: Upload packages
         uses: actions/upload-artifact@v4
         with:
           name: anland-kwin-arch-aarch64
-          path: /tmp/alarm/packages/*.pkg.tar.zst
+          path: /home/runner/alarm/packages/*.pkg.tar.zst
           if-no-files-found: error
           retention-days: 14
