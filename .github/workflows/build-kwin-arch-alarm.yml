@@ -89,6 +89,7 @@ jobs:
           pacman-key --populate archlinuxarm
           pacman -Syu --noconfirm base-devel sudo git
           useradd -m builder 2>/dev/null || true
+          chown builder:builder /home/builder
           echo "builder ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
           # sudo 在 qemu-user 模拟下 setuid 不生效，所以不用 sudo：
           # 预装两个 PKGBUILD 的全部依赖，并让 makepkg 去掉 -s
