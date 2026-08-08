@@ -1,0 +1,93 @@
+name: Build anland KWin / Xwayland (ALARM aarch64)
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'producers/kde/Arch_v5/**'
+      - '.github/workflows/build-kwin-arch-alarm.yml'
+  schedule:
+    # 每周一 04:00 UTC 构建一次，跟上上游依赖变化
+    - cron: '0 4 * * 1'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-kwin-arch-alarm
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU (aarch64 user-mode + binfmt)
+        uses: docker/setup-qemu-action@v3
+
+      - name: Cache ALARM rootfs tarball
+        id: cache-rootfs
+        uses: actions/cache@v4
+        with:
+          path: /tmp/alarm/ArchLinuxARM-aarch64-latest.tar.gz
+          # 上游 tarball 更新时把 key 里的版本号 +1 即可
+          key: alarm-aarch64-rootfs-v1
+
+      - name: Download ALARM aarch64 rootfs
+        if: steps.cache-rootfs.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p /tmp/alarm
+          curl -fL --retry 3 -o /tmp/alarm/ArchLinuxARM-aarch64-latest.tar.gz \
+            http://os.archlinuxarm.org/os/ArchLinuxARM-aarch64-latest.tar.gz
+
+      - name: Extract rootfs
+        run: |
+          sudo rm -rf /tmp/alarm/rootfs
+          sudo mkdir -p /tmp/alarm/rootfs
+          sudo tar -xzf /tmp/alarm/ArchLinuxARM-aarch64-latest.tar.gz -C /tmp/alarm/rootfs
+          # 让 chroot 内的 aarch64 二进制能被内核交给 qemu 解释执行
+          sudo cp /usr/bin/qemu-aarch64-static /tmp/alarm/rootfs/usr/bin/
+          # chroot 里要联网，先保证 DNS 配置可用
+          sudo cp /etc/resolv.conf /tmp/alarm/rootfs/etc/resolv.conf
+          # 部分工具会读 /proc（如 python、某些构建脚本）
+          sudo mount --bind /proc /tmp/alarm/rootfs/proc
+
+      - name: Bootstrap ALARM (keyring + base-devel + sudo)
+        run: |
+          sudo chroot /tmp/alarm/rootfs /bin/bash -c '
+            set -e
+            pacman-key --init
+            pacman-key --populate archlinuxarm
+            pacman -Sy --noconfirm archlinuxarm-keyring
+            pacman -Syu --noconfirm base-devel sudo git
+            useradd -m builder
+            echo "builder ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
+          '
+
+      - name: Copy Arch_v5 producer into chroot
+        run: |
+          sudo cp -r producers/kde/Arch_v5 /tmp/alarm/rootfs/home/builder/
+
+      - name: Build kwin + xwayland packages (emulated)
+        run: |
+          sudo chroot /tmp/alarm/rootfs /bin/su - builder -c \
+            "cd ~/Arch_v5 && INSTALL=0 JOBS=\$(nproc) ./build.sh"
+
+      - name: Collect packages
+        run: |
+          mkdir -p /tmp/alarm/packages
+          sudo find /tmp/alarm/rootfs/home/builder/.cache/anland/kwin-arch/packages \
+            -name '*.pkg.tar.zst' -exec cp {} /tmp/alarm/packages/ \;
+          ls -lh /tmp/alarm/packages/
+          test -n "$(ls /tmp/alarm/packages/)" || { echo 'no packages produced'; exit 1; }
+
+      - name: Upload packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: anland-kwin-arch-aarch64
+          path: /tmp/alarm/packages/*.pkg.tar.zst
+          if-no-files-found: error
+          retention-days: 14
