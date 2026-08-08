@@ -7,8 +7,8 @@ on:
       - 'producers/kde/Arch_v5/**'
       - '.github/workflows/build-kwin-arch-alarm.yml'
   schedule:
-    # 每周一 04:00 UTC 构建一次，跟上上游依赖变化
-    - cron: '0 4 * * 1'
+    # 每天 0:00（北京时间，UTC+8 → 16:00 UTC）自动构建
+    - cron: '0 16 * * *'
 
 permissions:
   contents: read
