@@ -57,13 +57,18 @@ jobs:
           sudo cp /usr/bin/qemu-aarch64-static /tmp/alarm/rootfs/usr/bin/
           # chroot 里要联网，先保证 DNS 配置可用
           sudo cp /etc/resolv.conf /tmp/alarm/rootfs/etc/resolv.conf
-          # 部分工具会读 /proc（如 python、某些构建脚本）
+          # 部分工具会读 /proc、/dev（如 python、gpg）
           sudo mount --bind /proc /tmp/alarm/rootfs/proc
+          sudo mount --bind /dev /tmp/alarm/rootfs/dev
 
       - name: Bootstrap ALARM (keyring + base-devel + sudo)
         run: |
           sudo chroot /tmp/alarm/rootfs /bin/bash -c '
             set -e
+            # GitHub runner 内核不支持 Landlock，pacman 6.1+ 的沙箱会失败，关掉它
+            sed -i "s/^#DisableSandbox/DisableSandbox/" /etc/pacman.conf
+            grep -q "^DisableSandbox" /etc/pacman.conf || \
+              sed -i "/^\[options\]/a DisableSandbox" /etc/pacman.conf
             pacman-key --init
             pacman-key --populate archlinuxarm
             pacman -Sy --noconfirm archlinuxarm-keyring
