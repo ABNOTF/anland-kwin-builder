@@ -55,8 +55,17 @@ jobs:
           sudo tar -xzf /tmp/alarm/ArchLinuxARM-aarch64-latest.tar.gz -C /tmp/alarm/rootfs
           # 让 chroot 内的 aarch64 二进制能被内核交给 qemu 解释执行
           sudo cp /usr/bin/qemu-aarch64-static /tmp/alarm/rootfs/usr/bin/
-          # runner 的 resolv.conf 是 stub/symlink，chroot 里不可用，直接写公共 DNS
-          printf 'nameserver 8.8.8.8\nnameserver 1.1.1.1\n' | sudo tee /tmp/alarm/rootfs/etc/resolv.conf
+          # DNS：优先复用宿主机 resolver（runner 上 systemd-resolved 监听 127.0.0.53）
+          sudo rm -f /tmp/alarm/rootfs/etc/resolv.conf
+          sudo touch /tmp/alarm/rootfs/etc/resolv.conf
+          if ! sudo mount --bind /etc/resolv.conf /tmp/alarm/rootfs/etc/resolv.conf 2>/dev/null; then
+            printf 'nameserver 8.8.8.8\nnameserver 1.1.1.1\n' | sudo tee /tmp/alarm/rootfs/etc/resolv.conf
+          fi
+          # ALARM 的 nsswitch 用 systemd-resolved 的 resolve 模块，绑上宿主机 socket 目录
+          if [ -d /run/systemd/resolve ]; then
+            sudo mkdir -p /tmp/alarm/rootfs/run/systemd
+            sudo mount --bind /run/systemd/resolve /tmp/alarm/rootfs/run/systemd/resolve 2>/dev/null || true
+          fi
           # 部分工具会读 /proc、/dev（如 python、gpg）
           sudo mount --bind /proc /tmp/alarm/rootfs/proc
           sudo mount --bind /dev /tmp/alarm/rootfs/dev
@@ -69,6 +78,9 @@ jobs:
             sed -i "s/^#DisableSandbox/DisableSandbox/" /etc/pacman.conf
             grep -q "^DisableSandbox" /etc/pacman.conf || \
               sed -i "/^\[options\]/a DisableSandbox" /etc/pacman.conf
+            echo '--- resolver in chroot ---'
+            cat /etc/resolv.conf
+            getent hosts mirror.archlinuxarm.org || echo 'RESOLVE_FAILED'
             pacman-key --init
             pacman-key --populate archlinuxarm
             pacman -Sy --noconfirm archlinuxarm-keyring
