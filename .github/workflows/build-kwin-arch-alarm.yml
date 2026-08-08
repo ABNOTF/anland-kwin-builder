@@ -70,7 +70,14 @@ jobs:
           sudo mount --bind /proc /home/runner/alarm/rootfs/proc
           sudo mount --bind /dev /home/runner/alarm/rootfs/dev
 
-      - name: Bootstrap ALARM (keyring + base-devel + sudo)
+      - name: Mount repo into chroot
+        run: |
+          # 直接 bind-mount 整个仓库：Arch_v5/kwin 是指向 anland_backend_Arch_v5 的
+          # 符号链接，只拷子目录会变成断链
+          sudo mkdir -p /home/runner/alarm/rootfs/home/builder/anland
+          sudo mount --bind "$GITHUB_WORKSPACE" /home/runner/alarm/rootfs/home/builder/anland
+
+      - name: Bootstrap ALARM (keyring + base-devel + deps)
         run: |
           sudo chroot /home/runner/alarm/rootfs /bin/bash -c '
             set -e
@@ -81,23 +88,18 @@ jobs:
             # chroot 里 /proc/self/mountinfo 是宿主机挂载表，pacman 空间检查会误判，
             # 直接关掉 CheckSpace
             sed -i "s/^CheckSpace/#CheckSpace/" /etc/pacman.conf
-            echo "--- resolver in chroot ---"
-            cat /etc/resolv.conf
-            getent hosts mirror.archlinuxarm.org || echo "RESOLVE_FAILED"
             pacman-key --init
             pacman-key --populate archlinuxarm
-            pacman -Sy --noconfirm archlinuxarm-keyring
             pacman -Syu --noconfirm base-devel sudo git
             useradd -m builder
             echo "builder ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
+            # sudo 在 qemu-user 模拟下 setuid 不生效，所以不用 sudo：
+            # 预装两个 PKGBUILD 的全部依赖，并让 makepkg 去掉 -s
+            cd /home/builder/anland/producers/kde/Arch_v5
+            deps=$(sed -n "/^depends=(/,/^)/p;/^makedepends=(/,/^)/p" PKGBUILD xorg-xwayland.PKGBUILD | tr -d "()" | tr "\n" " ")
+            pacman -S --noconfirm --needed $deps
+            sed -i "s/MAKEPKG_ARGS=(-C -f -s --clean)/MAKEPKG_ARGS=(-C -f --clean)/" build.sh
           '
-
-      - name: Mount repo into chroot
-        run: |
-          # 直接 bind-mount 整个仓库：Arch_v5/kwin 是指向 anland_backend_Arch_v5 的
-          # 符号链接，只拷子目录会变成断链
-          sudo mkdir -p /home/runner/alarm/rootfs/home/builder/anland
-          sudo mount --bind "$GITHUB_WORKSPACE" /home/runner/alarm/rootfs/home/builder/anland
 
       - name: Build kwin + xwayland packages (emulated)
         run: |
