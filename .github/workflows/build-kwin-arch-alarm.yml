@@ -96,7 +96,9 @@ jobs:
             # sudo 在 qemu-user 模拟下 setuid 不生效，所以不用 sudo：
             # 预装两个 PKGBUILD 的全部依赖，并让 makepkg 去掉 -s
             cd /home/builder/anland/producers/kde/Arch_v5
-            deps=$(sed -n "/^depends=(/,/^)/p;/^makedepends=(/,/^)/p" PKGBUILD xorg-xwayland.PKGBUILD | tr -d "()" | tr "\n" " ")
+            deps=$(awk '/^depends=\(/,/^\)/{ if ($0 !~ /^depends=\(/ && $0 !~ /^\)/) print }
+                    /^makedepends=\(/,/^\)/{ if ($0 !~ /^makedepends=\(/ && $0 !~ /^\)/) print }' \
+                  PKGBUILD xorg-xwayland.PKGBUILD | tr "\n" " ")
             pacman -S --noconfirm --needed $deps
             sed -i "s/MAKEPKG_ARGS=(-C -f -s --clean)/MAKEPKG_ARGS=(-C -f --clean)/" build.sh
           '
