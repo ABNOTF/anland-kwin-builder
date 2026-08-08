@@ -92,14 +92,17 @@ jobs:
             echo "builder ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
           '
 
-      - name: Copy Arch_v5 producer into chroot
+      - name: Mount repo into chroot
         run: |
-          sudo cp -r producers/kde/Arch_v5 /tmp/alarm/rootfs/home/builder/
+          # 直接 bind-mount 整个仓库：Arch_v5/kwin 是指向 anland_backend_Arch_v5 的
+          # 符号链接，只拷子目录会变成断链
+          sudo mkdir -p /tmp/alarm/rootfs/home/builder/anland
+          sudo mount --bind "$GITHUB_WORKSPACE" /tmp/alarm/rootfs/home/builder/anland
 
       - name: Build kwin + xwayland packages (emulated)
         run: |
           sudo chroot /tmp/alarm/rootfs /bin/su - builder -c \
-            "cd ~/Arch_v5 && INSTALL=0 JOBS=\$(nproc) ./build.sh"
+            "cd ~/anland/producers/kde/Arch_v5 && INSTALL=0 JOBS=\$(nproc) ./build.sh"
 
       - name: Collect packages
         run: |
