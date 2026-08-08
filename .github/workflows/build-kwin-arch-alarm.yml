@@ -19,19 +19,11 @@ concurrency:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
     timeout-minutes: 360
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Set up QEMU user-mode emulation (aarch64)
-        run: |
-          sudo mount -t binfmt_misc binfmt_misc /proc/sys/fs/binfmt_misc 2>/dev/null || true
-          sudo apt-get update
-          sudo apt-get install -y qemu-user-static
-          test -f /usr/bin/qemu-aarch64-static
-          cat /proc/sys/fs/binfmt_misc/qemu-aarch64
 
       - name: Cache ALARM rootfs tarball
         id: cache-rootfs
@@ -53,8 +45,6 @@ jobs:
           sudo rm -rf /home/runner/alarm/rootfs
           sudo mkdir -p /home/runner/alarm/rootfs
           sudo tar -xzf /home/runner/alarm/ArchLinuxARM-aarch64-latest.tar.gz -C /home/runner/alarm/rootfs
-          # 让 chroot 内的 aarch64 二进制能被内核交给 qemu 解释执行
-          sudo cp /usr/bin/qemu-aarch64-static /home/runner/alarm/rootfs/usr/bin/
           # DNS：优先复用宿主机 resolver（runner 上 systemd-resolved 监听 127.0.0.53）
           sudo rm -f /home/runner/alarm/rootfs/etc/resolv.conf
           sudo touch /home/runner/alarm/rootfs/etc/resolv.conf
@@ -91,8 +81,7 @@ jobs:
           useradd -m builder 2>/dev/null || true
           chown builder:builder /home/builder
           echo "builder ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
-          # sudo 在 qemu-user 模拟下 setuid 不生效，所以不用 sudo：
-          # 预装两个 PKGBUILD 的全部依赖，并让 makepkg 去掉 -s
+          # 预装两个 PKGBUILD 的全部依赖，并让 makepkg 去掉 -s（chroot 内不依赖 sudo）
           cd /home/builder/anland/producers/kde/Arch_v5
           deps=$(awk '/^depends=\(/,/^\)/{ if ($0 !~ /^depends=\(/ && $0 !~ /^\)/) print }
                  /^makedepends=\(/,/^\)/{ if ($0 !~ /^makedepends=\(/ && $0 !~ /^\)/) print }' \
